@@ -1,10 +1,10 @@
-use repository_intelligence::Index;
+use repository_intelligence::{current_git_revision, Index};
 use std::{
     env,
     io::{Read, Write},
     net::TcpListener,
     path::Path,
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 fn main() {
@@ -28,11 +28,13 @@ fn main() {
 }
 
 fn serve(address: &str, root: &Path) {
-    let index = Arc::new(Index::build(root).expect("index repository"));
+    let root = root.to_path_buf();
+    let index = Arc::new(RwLock::new(Index::build(&root).expect("index repository")));
     let listener = TcpListener::bind(address).expect("bind HTTP listener");
     eprintln!("repository-intelligence listening on http://{address}");
     for stream in listener.incoming() {
         let index = Arc::clone(&index);
+        let root = root.clone();
         let Ok(mut stream) = stream else { continue };
         let mut request = [0_u8; 8192];
         let Ok(size) = stream.read(&mut request) else {
@@ -42,6 +44,7 @@ fn serve(address: &str, root: &Path) {
         let first_line = request.lines().next().unwrap_or_default();
         let path = first_line.split_whitespace().nth(1).unwrap_or("/");
         let body = if path == "/health" {
+            let index = index.read().expect("index lock");
             format!(
                 "{{\"status\":\"ok\",\"commit\":{}}}",
                 index
@@ -49,7 +52,24 @@ fn serve(address: &str, root: &Path) {
                     .map(|revision| format!("\"{}\"", json_escape(revision)))
                     .unwrap_or_else(|| "null".to_owned())
             )
+        } else if path == "/reload" {
+            match current_git_revision(&root) {
+                Some(revision) => {
+                    let mut index = index.write().expect("index lock");
+                    match index.sync_git(&root, &revision) {
+                        Ok(()) => format!(
+                            "{{\"status\":\"reloaded\",\"commit\":\"{}\"}}",
+                            json_escape(&revision)
+                        ),
+                        Err(error) => {
+                            format!("{{\"error\":\"{}\"}}", json_escape(&error.to_string()))
+                        }
+                    }
+                }
+                None => "{\"error\":\"repository has no readable Git HEAD\"}".to_owned(),
+            }
         } else if let Some(query) = path.strip_prefix("/search?q=") {
+            let index = index.read().expect("index lock");
             let query = query.replace('+', " ");
             let hits = index.search(&query, 10);
             let items = hits
@@ -77,7 +97,7 @@ fn serve(address: &str, root: &Path) {
         } else {
             "{\"error\":\"use /health or /search?q=term\"}".to_owned()
         };
-        let status = if path == "/health" || path.starts_with("/search?q=") {
+        let status = if path == "/health" || path == "/reload" || path.starts_with("/search?q=") {
             "200 OK"
         } else {
             "404 Not Found"
