@@ -19,3 +19,5 @@ The output is a path, line number, and source line. This is a retrieval baseline
 - removed-file disappearance
 
 Embedding retrieval, reranking, commit-aware indexing, and generated answers are deliberately not claimed yet. See the portfolio scope report for the evaluation contract.
+
+The first authored evaluation set is in `evaluation/questions.json`. It is a measurement fixture, not a reported score yet; the evaluator will be added before any retrieval comparison is published.
