@@ -45,11 +45,21 @@ fn main() {
             // We just look for patterns like file.rs:12
             let mut all_citations_valid = true;
             for word in line.split_whitespace() {
-                if word.contains(".rs:") || word.contains(".md:") || word.contains(".txt:") || word.contains(".toml:") {
-                    let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != ':' && c != '/' && c != '_' && c != '-');
-                    if !cleaned.is_empty() && cleaned.contains(':') && !evidence.contains(cleaned) {
-                        all_citations_valid = false;
-                        break;
+                // If the word looks like a citation [path:line]
+                let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != ':' && c != '/' && c != '_' && c != '-');
+                if cleaned.contains(':') && cleaned.chars().filter(|&c| c == ':').count() == 1 {
+                    let parts: Vec<&str> = cleaned.split(':').collect();
+                    if parts.len() == 2 && parts[1].parse::<u32>().is_ok() && parts[0].contains('.') {
+                        // It's formatted as path:line. Does evidence contain this exact string bounded by newline or space?
+                        // A simple contains is not enough (e.g. src/main.rs:99 matches src/main.rs:999)
+                        let target = format!("{}:{}", parts[0], parts[1]);
+                        let target_with_space = format!("{} ", target);
+                        let target_with_newline = format!("{}\n", target);
+                        
+                        if !evidence.contains(&target_with_space) && !evidence.contains(&target_with_newline) && !evidence.ends_with(&target) {
+                            all_citations_valid = false;
+                            break;
+                        }
                     }
                 }
             }

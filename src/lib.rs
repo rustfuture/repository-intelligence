@@ -181,7 +181,11 @@ impl Index {
                 self.walk(root, &path)?;
             } else if is_indexable(rel) {
                 // Sensitive files
-                if file_name.starts_with('.') || file_name.ends_with(".pem") || file_name.ends_with(".key") || file_name == "id_rsa" {
+                if (file_name.starts_with('.') && file_name != ".github" && file_name != ".gitignore") || 
+                   file_name.ends_with(".pem") || file_name.ends_with(".key") || file_name == "id_rsa" ||
+                   file_name.ends_with(".p12") || file_name.ends_with(".pfx") || file_name.ends_with(".keystore") ||
+                   file_name == "credentials.json" || file_name == "service-account.json" || file_name == ".npmrc" || file_name == ".netrc" ||
+                   file_name == ".env" || file_name.starts_with(".env.") || file_name == "id_ed25519" {
                     continue;
                 }
                 self.add_file(rel.to_path_buf(), fs::read_to_string(path)?);
