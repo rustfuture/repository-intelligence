@@ -175,6 +175,10 @@ fn git_revision(root: &Path) -> Option<String> {
     (!revision.is_empty()).then_some(revision)
 }
 
+pub fn current_git_revision(root: &Path) -> Option<String> {
+    git_revision(root)
+}
+
 fn is_indexable(path: &Path) -> bool {
     !matches!(
         path.extension().and_then(|x| x.to_str()),
