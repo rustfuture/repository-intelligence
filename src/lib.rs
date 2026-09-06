@@ -97,6 +97,17 @@ impl Index {
         });
     }
 
+    pub fn analytics(&self) -> String {
+        let file_count = self.files.len();
+        let term_count = self.terms.len();
+        let total_lines: usize = self.files.values().map(|lines| lines.len()).sum();
+        let mut top_terms: Vec<_> = self.terms.iter().map(|(k, v)| (k.clone(), v.len())).collect();
+        top_terms.sort_by(|a, b| b.1.cmp(&a.1));
+        top_terms.truncate(5);
+        let top_terms_str = top_terms.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(", ");
+        format!(r#"{{"files": {}, "lines": {}, "unique_terms": {}, "top_terms": "{}"}}"#, file_count, total_lines, term_count, top_terms_str)
+    }
+
     pub fn search(&self, query: &str, limit: usize) -> Vec<Hit> {
         let terms: Vec<String> = tokenize(query);
         if terms.is_empty() {
@@ -263,5 +274,14 @@ mod tests {
         index.sync_git(&root, new.trim()).unwrap();
         assert!(index.search("bounded", 5).is_empty());
         assert_eq!(index.search("changed symbol", 5).len(), 1);
+    }
+
+    #[test]
+    fn analytics_returns_stats() {
+        let root = fixture();
+        let index = Index::build(&root).unwrap();
+        let stats = index.analytics();
+        assert!(stats.contains(r#""files": 1"#));
+        assert!(stats.contains(r#""lines": 1"#));
     }
 }

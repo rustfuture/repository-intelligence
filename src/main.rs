@@ -1,4 +1,4 @@
-use repository_intelligence::{current_git_revision, llm::AgyProvider, Index};
+use repository_intelligence::{current_git_revision, llm::{AgyProvider, OllamaProvider, Provider}, Index};
 use std::{
     env,
     io::{Read, Write},
@@ -21,9 +21,14 @@ fn main() {
             .collect::<Vec<_>>()
             .join("\n");
         let model = env::var("AGY_MODEL").unwrap_or_else(|_| "gemini-3.8-flash-low".to_owned());
-        let answer = AgyProvider { model }
+        let provider: Box<dyn Provider> = if env::var("USE_OLLAMA").is_ok() {
+            Box::new(OllamaProvider { model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_owned()) })
+        } else {
+            Box::new(AgyProvider { model })
+        };
+        let answer = provider
             .answer(&question, &evidence)
-            .expect("run AGY provider");
+            .expect("run LLM provider");
         println!(
             "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
             index.revision().unwrap_or("unknown"),
@@ -41,6 +46,12 @@ fn main() {
         let address = args.next().unwrap_or_else(|| "127.0.0.1:8080".into());
         let repository = args.next().unwrap_or_else(|| ".".into());
         serve(&address, Path::new(&repository));
+        return;
+    }
+    if root == "--analytics" {
+        let repository = args.next().unwrap_or_else(|| ".".into());
+        let index = Index::build(Path::new(&repository)).expect("index repository");
+        println!("{}", index.analytics());
         return;
     }
     let query = args.collect::<Vec<_>>().join(" ");
