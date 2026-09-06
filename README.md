@@ -8,6 +8,7 @@ This repository begins the Repository Intelligence project with a deterministic 
 cargo test --locked
 cargo run --locked -- . "bounded worker"
 cargo run --locked -- --serve 127.0.0.1:8080 .
+./scripts/validate.sh
 ```
 
 The output is a path, line number, and source line. This is a retrieval baseline, not an LLM answer and not a security boundary. Repository content is treated as untrusted data; no instructions found in source files are executed.
@@ -25,4 +26,4 @@ Embedding retrieval, reranking, commit-aware indexing, and generated answers are
 
 The library’s `Index::sync_git` applies added, modified, and deleted paths between two Git revisions and falls back to a full rebuild when history is unavailable. The HTTP `/reload` endpoint exposes this behavior without restarting the process.
 
-The first authored evaluation set is in `evaluation/questions.json`. Run `python3 evaluation/evaluate.py` to reproduce the current lexical baseline (`Recall@5 = 0.50`, `MRR = 0.2642`, 20 questions). These are file-level retrieval and citation-path results, not answer-quality or LLM results.
+The first authored evaluation set is in `evaluation/questions.json`. Run `python3 evaluation/evaluate.py` to reproduce the current lexical baseline (`Recall@5 = 0.40`, `MRR = 0.2333`, 20 questions). These are file-level retrieval and citation-path results, not answer-quality or LLM results; the score is sensitive to the current repository snapshot.
