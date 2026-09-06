@@ -38,3 +38,5 @@ Run `./scripts/llm_answer_smoke.sh` to verify a real answer contains a repositor
 ## License
 
 MIT. The evaluation corpus in this repository is authored specifically for this project.
+
+Architecture and limitations are documented in `docs/architecture.md`; the current baseline is summarized in `RELEASE_NOTES.md`. Run `python3 scripts/benchmark.py` for the local fixed-corpus latency measurement.
