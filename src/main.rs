@@ -1,4 +1,8 @@
-use repository_intelligence::{current_git_revision, llm::{AgyProvider, OllamaProvider, Provider}, Index};
+use repository_intelligence::{
+    current_git_revision,
+    llm::{AgyProvider, OllamaProvider, Provider},
+    Index,
+};
 use std::{
     env,
     io::{Read, Write},
@@ -22,13 +26,41 @@ fn main() {
             .join("\n");
         let model = env::var("AGY_MODEL").unwrap_or_else(|_| "gemini-3.8-flash-low".to_owned());
         let provider: Box<dyn Provider> = if env::var("USE_OLLAMA").is_ok() {
-            Box::new(OllamaProvider { model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_owned()) })
+            Box::new(OllamaProvider {
+                model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_owned()),
+            })
         } else {
             Box::new(AgyProvider { model })
         };
-        let answer = provider
+        let mut answer = provider
             .answer(&question, &evidence)
             .expect("run LLM provider");
+            
+        // Runtime citation validation
+        let _evidence_lines: Vec<&str> = evidence.lines().collect();
+        let mut verified_text = String::new();
+        for line in answer.text.lines() {
+            let _valid_line = line.to_string();
+            // simple check: if line contains a citation path:number, it MUST be in evidence
+            // We just look for patterns like file.rs:12
+            let mut all_citations_valid = true;
+            for word in line.split_whitespace() {
+                if word.contains(".rs:") || word.contains(".md:") || word.contains(".txt:") || word.contains(".toml:") {
+                    let cleaned = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != ':' && c != '/' && c != '_' && c != '-');
+                    if !cleaned.is_empty() && cleaned.contains(':') && !evidence.contains(cleaned) {
+                        all_citations_valid = false;
+                        break;
+                    }
+                }
+            }
+            if !all_citations_valid {
+                verified_text.push_str(&format!("{} [WARNING: Unverified citation removed]\n", line.split_whitespace().filter(|w| !w.contains(":")).collect::<Vec<_>>().join(" ")));
+            } else {
+                verified_text.push_str(line);
+                verified_text.push('\n');
+            }
+        }
+        answer.text = verified_text.trim().to_owned();
         println!(
             "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
             index.revision().unwrap_or("unknown"),

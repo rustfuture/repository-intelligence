@@ -101,11 +101,22 @@ impl Index {
         let file_count = self.files.len();
         let term_count = self.terms.len();
         let total_lines: usize = self.files.values().map(|lines| lines.len()).sum();
-        let mut top_terms: Vec<_> = self.terms.iter().map(|(k, v)| (k.clone(), v.len())).collect();
+        let mut top_terms: Vec<_> = self
+            .terms
+            .iter()
+            .map(|(k, v)| (k.clone(), v.len()))
+            .collect();
         top_terms.sort_by(|a, b| b.1.cmp(&a.1));
         top_terms.truncate(5);
-        let top_terms_str = top_terms.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(", ");
-        format!(r#"{{"files": {}, "lines": {}, "unique_terms": {}, "top_terms": "{}"}}"#, file_count, total_lines, term_count, top_terms_str)
+        let top_terms_str = top_terms
+            .iter()
+            .map(|(k, v)| format!("{k}:{v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            r#"{{"files": {}, "lines": {}, "unique_terms": {}, "top_terms": "{}"}}"#,
+            file_count, total_lines, term_count, top_terms_str
+        )
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<Hit> {
@@ -146,16 +157,33 @@ impl Index {
 
     fn walk(&mut self, root: &Path, dir: &Path) -> io::Result<()> {
         for entry in fs::read_dir(dir)? {
-            let path = entry?.path();
-            let rel = path.strip_prefix(root).expect("walked under root");
-            if path.is_dir() {
-                if !matches!(
-                    rel.file_name().and_then(|n| n.to_str()),
-                    Some(".git" | "target" | "node_modules")
-                ) {
-                    self.walk(root, &path)?;
+            let entry = entry?;
+            let path = entry.path();
+            
+            // Skip symlinks
+            if let Ok(meta) = fs::symlink_metadata(&path) {
+                if meta.file_type().is_symlink() {
+                    continue;
                 }
+            }
+
+            let rel = path.strip_prefix(root).expect("walked under root");
+            let file_name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            
+            if path.is_dir() {
+                // Sensitive dirs & typical ignores
+                if file_name.starts_with('.') || matches!(
+                    file_name,
+                    "target" | "node_modules" | "build" | "dist"
+                ) {
+                    continue;
+                }
+                self.walk(root, &path)?;
             } else if is_indexable(rel) {
+                // Sensitive files
+                if file_name.starts_with('.') || file_name.ends_with(".pem") || file_name.ends_with(".key") || file_name == "id_rsa" {
+                    continue;
+                }
                 self.add_file(rel.to_path_buf(), fs::read_to_string(path)?);
             }
         }
@@ -184,8 +212,16 @@ fn git_revision(root: &Path) -> Option<String> {
     if !output.status.success() {
         return None;
     }
-    let revision = String::from_utf8(output.stdout).ok()?.trim().to_owned();
-    (!revision.is_empty()).then_some(revision)
+    let mut revision = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    if revision.is_empty() { return None; }
+    
+    // Check if dirty
+    if let Ok(status) = Command::new("git").args(["-C", root.to_str()?, "status", "--porcelain"]).output() {
+        if !status.stdout.is_empty() {
+            revision.push_str("-dirty");
+        }
+    }
+    Some(revision)
 }
 
 pub fn current_git_revision(root: &Path) -> Option<String> {
