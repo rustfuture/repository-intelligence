@@ -16,20 +16,21 @@ The output is a path, line number, and source line. This is a retrieval baseline
 
 The server exposes `GET /health`, `GET /reload`, and `GET /search?q=term+term`. Reload applies the Git diff from the indexed commit to the current HEAD and returns the new commit. Search returns the indexed Git commit plus path, line, score, and source text. It is a local development API; authentication, TLS, rate limiting, and multi-tenant isolation are not implemented.
 
-## Current acceptance evidence
+## Implemented capabilities
 
-- line-cited lexical retrieval
-- generated `target/` exclusion
-- changed-file refresh
-- removed-file disappearance
+- Line-cited lexical retrieval with source snippet extraction
+- Automatic exclusion of build/temporary artifacts (`target/`, `.git/`, binaries)
+- Changed-file refresh and removed-file disappearance
+- Git-aware incremental diff synchronization (`Index::sync_git`, `GET /reload`)
+- Grounded LLM answer generation (`--answer`) passing local cited evidence to Gemini via AGY
 
-Embedding retrieval, reranking, commit-aware indexing, and generated answers are deliberately not claimed yet. See the portfolio scope report for the evaluation contract.
+## Deliberate boundaries & non-claims
 
-The library’s `Index::sync_git` applies added, modified, and deleted paths between two Git revisions and falls back to a full rebuild when history is unavailable. The HTTP `/reload` endpoint exposes this behavior without restarting the process.
+- **Embedding & Hybrid Retrieval**: The comparison script `evaluation/evaluate_hybrid.py` is an offline Python evaluation using local Ollama `nomic-embed-text` and Reciprocal Rank Fusion. Vector embeddings and hybrid search are **not** integrated into the Rust product binary, library, or HTTP API.
+- **Reranking & Neural Search**: Neural rerankers and cross-encoders are not implemented.
+- **Filesystem Watcher**: Background filesystem watching is not implemented; synchronization is triggered explicitly via CLI or HTTP `/reload`.
+- **Production Controls**: Authentication, TLS, rate limiting, and multi-tenant isolation remain out of scope for this local development prototype.
 
-The first authored evaluation set is in `evaluation/questions.json`, with its fixed corpus in `evaluation/corpus/`. Run `python3 evaluation/evaluate.py` to reproduce the current lexical baseline (`Recall@5 = 1.00`, `MRR = 1.0000`, 20 questions). This tiny authored corpus is a plumbing/citation check, not evidence of general retrieval quality or LLM answer quality.
-
-With local Ollama `nomic-embed-text`, `evaluation/evaluate_hybrid.py` measured lexical MRR `1.0000`, embedding MRR `0.9167`, and hybrid RRF MRR `0.8667`; all three had Recall@5 `1.00`. Hybrid retrieval did not improve this small corpus and is not promoted as a gain.
 
 An optional real Gemini smoke invocation is documented in `docs/llm-validation.md`; it is deliberately separate from the deterministic baseline.
 
