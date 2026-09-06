@@ -25,9 +25,15 @@ fn main() {
             .answer(&question, &evidence)
             .expect("run AGY provider");
         println!(
-            "commit={}\n{}",
+            "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
             index.revision().unwrap_or("unknown"),
+            answer.model,
+            answer.duration_ms,
             answer
+                .cost_usd
+                .map(|cost| cost.to_string())
+                .unwrap_or_else(|| "unknown".to_owned()),
+            answer.text
         );
         return;
     }
