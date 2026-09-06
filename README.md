@@ -29,6 +29,8 @@ The library’s `Index::sync_git` applies added, modified, and deleted paths bet
 
 The first authored evaluation set is in `evaluation/questions.json`, with its fixed corpus in `evaluation/corpus/`. Run `python3 evaluation/evaluate.py` to reproduce the current lexical baseline (`Recall@5 = 1.00`, `MRR = 1.0000`, 20 questions). This tiny authored corpus is a plumbing/citation check, not evidence of general retrieval quality or LLM answer quality.
 
+With local Ollama `nomic-embed-text`, `evaluation/evaluate_hybrid.py` measured lexical MRR `1.0000`, embedding MRR `0.9167`, and hybrid RRF MRR `0.8667`; all three had Recall@5 `1.00`. Hybrid retrieval did not improve this small corpus and is not promoted as a gain.
+
 An optional real Gemini smoke invocation is documented in `docs/llm-validation.md`; it is deliberately separate from the deterministic baseline.
 
 `--answer` is the optional product path: it retrieves local cited evidence, sends only that evidence to AGY/Gemini, and prints the indexed commit with the model answer. The AGY CLI is an external prerequisite; no credentials are stored in this repository.

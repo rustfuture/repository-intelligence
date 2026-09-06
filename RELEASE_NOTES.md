@@ -12,4 +12,6 @@
 
 Local sequential HTTP benchmark on the fixed authored corpus (200 requests): p50 `0.210 ms`, p95 `0.432 ms`, max `0.698 ms`. These figures are localhost plumbing measurements, not production capacity claims.
 
+Retrieval comparison on the fixed 20-question corpus: lexical MRR `1.0000`, local `nomic-embed-text` MRR `0.9167`, hybrid reciprocal-rank-fusion MRR `0.8667`; all Recall@5 values were `1.00`. The hybrid method was worse on this fixture, so no improvement is claimed.
+
 This is not a production service. Authentication, TLS, durable storage, embedding/hybrid retrieval, broad evaluation, and cost/token accounting remain outside this release candidate.
