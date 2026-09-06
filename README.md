@@ -27,3 +27,5 @@ Embedding retrieval, reranking, commit-aware indexing, and generated answers are
 The library’s `Index::sync_git` applies added, modified, and deleted paths between two Git revisions and falls back to a full rebuild when history is unavailable. The HTTP `/reload` endpoint exposes this behavior without restarting the process.
 
 The first authored evaluation set is in `evaluation/questions.json`, with its fixed corpus in `evaluation/corpus/`. Run `python3 evaluation/evaluate.py` to reproduce the current lexical baseline (`Recall@5 = 1.00`, `MRR = 1.0000`, 20 questions). This tiny authored corpus is a plumbing/citation check, not evidence of general retrieval quality or LLM answer quality.
+
+An optional real Gemini smoke invocation is documented in `docs/llm-validation.md`; it is deliberately separate from the deterministic baseline.
