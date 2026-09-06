@@ -32,3 +32,5 @@ The first authored evaluation set is in `evaluation/questions.json`, with its fi
 An optional real Gemini smoke invocation is documented in `docs/llm-validation.md`; it is deliberately separate from the deterministic baseline.
 
 `--answer` is the optional product path: it retrieves local cited evidence, sends only that evidence to AGY/Gemini, and prints the indexed commit with the model answer. The AGY CLI is an external prerequisite; no credentials are stored in this repository.
+
+Run `./scripts/llm_answer_smoke.sh` to verify a real answer contains a repository `path:line` citation and no unvalidated `file://` URI.
