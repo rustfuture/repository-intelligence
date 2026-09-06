@@ -7,9 +7,12 @@ This repository begins the Repository Intelligence project with a deterministic 
 ```bash
 cargo test --locked
 cargo run --locked -- . "bounded worker"
+cargo run --locked -- --serve 127.0.0.1:8080 .
 ```
 
 The output is a path, line number, and source line. This is a retrieval baseline, not an LLM answer and not a security boundary. Repository content is treated as untrusted data; no instructions found in source files are executed.
+
+The server exposes `GET /health` and `GET /search?q=term+term`, returning JSON with path, line, score, and source text. It is a local development API; authentication, TLS, rate limiting, and multi-tenant isolation are not implemented.
 
 ## Current acceptance evidence
 
