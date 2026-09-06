@@ -34,3 +34,7 @@ An optional real Gemini smoke invocation is documented in `docs/llm-validation.m
 `--answer` is the optional product path: it retrieves local cited evidence, sends only that evidence to AGY/Gemini, and prints the indexed commit with the model answer. The AGY CLI is an external prerequisite; no credentials are stored in this repository.
 
 Run `./scripts/llm_answer_smoke.sh` to verify a real answer contains a repository `path:line` citation and no unvalidated `file://` URI.
+
+## License
+
+MIT. The evaluation corpus in this repository is authored specifically for this project.
