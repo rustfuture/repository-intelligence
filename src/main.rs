@@ -1,9 +1,21 @@
 use repository_intelligence::Index;
-use std::{env, path::Path};
+use std::{
+    env,
+    io::{Read, Write},
+    net::TcpListener,
+    path::Path,
+    sync::Arc,
+};
 
 fn main() {
     let mut args = env::args().skip(1);
     let root = args.next().unwrap_or_else(|| ".".into());
+    if root == "--serve" {
+        let address = args.next().unwrap_or_else(|| "127.0.0.1:8080".into());
+        let repository = args.next().unwrap_or_else(|| ".".into());
+        serve(&address, Path::new(&repository));
+        return;
+    }
     let query = args.collect::<Vec<_>>().join(" ");
     if query.trim().is_empty() {
         eprintln!("usage: repository-intelligence <repo> <query...>");
@@ -13,4 +25,62 @@ fn main() {
     for hit in index.search(&query, 10) {
         println!("{}:{}\t{}", hit.path.display(), hit.line, hit.text.trim());
     }
+}
+
+fn serve(address: &str, root: &Path) {
+    let index = Arc::new(Index::build(root).expect("index repository"));
+    let listener = TcpListener::bind(address).expect("bind HTTP listener");
+    eprintln!("repository-intelligence listening on http://{address}");
+    for stream in listener.incoming() {
+        let index = Arc::clone(&index);
+        let Ok(mut stream) = stream else { continue };
+        let mut request = [0_u8; 8192];
+        let Ok(size) = stream.read(&mut request) else {
+            continue;
+        };
+        let request = String::from_utf8_lossy(&request[..size]);
+        let first_line = request.lines().next().unwrap_or_default();
+        let path = first_line.split_whitespace().nth(1).unwrap_or("/");
+        let body = if path == "/health" {
+            "{\"status\":\"ok\"}".to_owned()
+        } else if let Some(query) = path.strip_prefix("/search?q=") {
+            let query = query.replace('+', " ");
+            let hits = index.search(&query, 10);
+            let items = hits
+                .iter()
+                .map(|hit| {
+                    format!(
+                        "{{\"path\":\"{}\",\"line\":{},\"score\":{},\"text\":\"{}\"}}",
+                        json_escape(&hit.path.display().to_string()),
+                        hit.line,
+                        hit.score,
+                        json_escape(hit.text.trim())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"query\":\"{}\",\"hits\":[{}]}}",
+                json_escape(&query),
+                items
+            )
+        } else {
+            "{\"error\":\"use /health or /search?q=term\"}".to_owned()
+        };
+        let status = if path == "/health" || path.starts_with("/search?q=") {
+            "200 OK"
+        } else {
+            "404 Not Found"
+        };
+        let response = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+        let _ = stream.write_all(response.as_bytes());
+    }
+}
+
+fn json_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
