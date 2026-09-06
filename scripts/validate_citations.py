@@ -9,6 +9,11 @@ output = subprocess.run(
     ["cargo", "run", "--quiet", "--locked", "--", "--answer", str(root), "What does the reload endpoint do?"],
     cwd=root, text=True, capture_output=True, check=True,
 ).stdout
+answer = output.lower()
+required_concepts = ("git diff", "added", "modified", "deleted", "commit")
+missing = [concept for concept in required_concepts if concept not in answer]
+if missing:
+    raise SystemExit(f"answer is missing required concepts: {', '.join(missing)}")
 citations = re.findall(r"(?<![\w/.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9_-]+):(\d+)", output)
 if not citations:
     raise SystemExit("no path:line citations found")
