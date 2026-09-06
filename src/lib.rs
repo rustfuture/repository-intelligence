@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,13 +17,19 @@ pub struct Hit {
 pub struct Index {
     files: HashMap<PathBuf, Vec<String>>,
     terms: HashMap<String, HashSet<(PathBuf, usize)>>,
+    revision: Option<String>,
 }
 
 impl Index {
     pub fn build(root: &Path) -> io::Result<Self> {
         let mut index = Self::default();
         index.rebuild(root)?;
+        index.revision = git_revision(root);
         Ok(index)
+    }
+
+    pub fn revision(&self) -> Option<&str> {
+        self.revision.as_deref()
     }
 
     pub fn rebuild(&mut self, root: &Path) -> io::Result<()> {
@@ -115,6 +122,18 @@ impl Index {
         }
         self.files.insert(relative, lines);
     }
+}
+
+fn git_revision(root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C", root.to_str()?, "rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let revision = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    (!revision.is_empty()).then_some(revision)
 }
 
 fn is_indexable(path: &Path) -> bool {

@@ -42,7 +42,13 @@ fn serve(address: &str, root: &Path) {
         let first_line = request.lines().next().unwrap_or_default();
         let path = first_line.split_whitespace().nth(1).unwrap_or("/");
         let body = if path == "/health" {
-            "{\"status\":\"ok\"}".to_owned()
+            format!(
+                "{{\"status\":\"ok\",\"commit\":{}}}",
+                index
+                    .revision()
+                    .map(|revision| format!("\"{}\"", json_escape(revision)))
+                    .unwrap_or_else(|| "null".to_owned())
+            )
         } else if let Some(query) = path.strip_prefix("/search?q=") {
             let query = query.replace('+', " ");
             let hits = index.search(&query, 10);
@@ -60,8 +66,12 @@ fn serve(address: &str, root: &Path) {
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"query\":\"{}\",\"hits\":[{}]}}",
+                "{{\"query\":\"{}\",\"commit\":{},\"hits\":[{}]}}",
                 json_escape(&query),
+                index
+                    .revision()
+                    .map(|revision| format!("\"{}\"", json_escape(revision)))
+                    .unwrap_or_else(|| "null".to_owned()),
                 items
             )
         } else {
