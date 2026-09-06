@@ -9,10 +9,11 @@ from pathlib import Path
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     questions = json.loads((root / "evaluation/questions.json").read_text())
+    corpus = root / "evaluation" / "corpus"
     ranks = []
     for question in questions:
         result = subprocess.run(
-            ["cargo", "run", "--quiet", "--locked", "--", str(root), *question["query"].split()],
+            ["cargo", "run", "--quiet", "--locked", "--", str(corpus), *question["query"].split()],
             cwd=root, text=True, capture_output=True, check=True,
         )
         paths = [line.split("\t", 1)[0].rsplit(":", 1)[0] for line in result.stdout.splitlines()]
