@@ -11,3 +11,5 @@ On 2026-09-06, `gemini-3.8-flash-low` returned:
 > The `/reload` endpoint applies the Git diff from the indexed commit to the current HEAD, updates added, modified, and deleted paths, and returns the new commit.
 
 This verifies a real model invocation against supplied evidence, not a mock. It is not yet the product’s automated answer path; hallucination evaluation, prompt-injection tests, provider abstraction, and cost accounting remain before claiming completed LLM integration.
+
+The optional Rust CLI path (`cargo run --locked -- --answer . "What does the reload endpoint do?"`) was also run with the same model. It retrieved local evidence, passed only the top cited lines to AGY, and returned an answer with the indexed commit. Generated `file:///` links are model formatting and are not treated as validated application links; citation validation remains a follow-up gate.
