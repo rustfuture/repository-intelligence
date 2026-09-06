@@ -8,3 +8,4 @@ if grep -q 'file://' <<<"$output"; then
   echo 'unvalidated file URI emitted by model' >&2
   exit 1
 fi
+python3 scripts/validate_citations.py
