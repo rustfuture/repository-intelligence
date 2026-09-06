@@ -9,6 +9,7 @@ cargo test --locked
 cargo run --locked -- . "bounded worker"
 cargo run --locked -- --serve 127.0.0.1:8080 .
 ./scripts/validate.sh
+cargo run --locked -- --answer . "What does the reload endpoint do?"
 ```
 
 The output is a path, line number, and source line. This is a retrieval baseline, not an LLM answer and not a security boundary. Repository content is treated as untrusted data; no instructions found in source files are executed.
@@ -29,3 +30,5 @@ The library’s `Index::sync_git` applies added, modified, and deleted paths bet
 The first authored evaluation set is in `evaluation/questions.json`, with its fixed corpus in `evaluation/corpus/`. Run `python3 evaluation/evaluate.py` to reproduce the current lexical baseline (`Recall@5 = 1.00`, `MRR = 1.0000`, 20 questions). This tiny authored corpus is a plumbing/citation check, not evidence of general retrieval quality or LLM answer quality.
 
 An optional real Gemini smoke invocation is documented in `docs/llm-validation.md`; it is deliberately separate from the deterministic baseline.
+
+`--answer` is the optional product path: it retrieves local cited evidence, sends only that evidence to AGY/Gemini, and prints the indexed commit with the model answer. The AGY CLI is an external prerequisite; no credentials are stored in this repository.

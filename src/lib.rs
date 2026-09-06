@@ -1,3 +1,5 @@
+pub mod llm;
+
 use std::{
     collections::{HashMap, HashSet},
     fs, io,

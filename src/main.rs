@@ -1,4 +1,4 @@
-use repository_intelligence::{current_git_revision, Index};
+use repository_intelligence::{current_git_revision, llm::AgyProvider, Index};
 use std::{
     env,
     io::{Read, Write},
@@ -10,6 +10,27 @@ use std::{
 fn main() {
     let mut args = env::args().skip(1);
     let root = args.next().unwrap_or_else(|| ".".into());
+    if root == "--answer" {
+        let repository = args.next().unwrap_or_else(|| ".".into());
+        let question = args.collect::<Vec<_>>().join(" ");
+        let index = Index::build(Path::new(&repository)).expect("index repository");
+        let evidence = index
+            .search(&question, 5)
+            .iter()
+            .map(|hit| format!("{}:{} {}", hit.path.display(), hit.line, hit.text.trim()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let model = env::var("AGY_MODEL").unwrap_or_else(|_| "gemini-3.8-flash-low".to_owned());
+        let answer = AgyProvider { model }
+            .answer(&question, &evidence)
+            .expect("run AGY provider");
+        println!(
+            "commit={}\n{}",
+            index.revision().unwrap_or("unknown"),
+            answer
+        );
+        return;
+    }
     if root == "--serve" {
         let address = args.next().unwrap_or_else(|| "127.0.0.1:8080".into());
         let repository = args.next().unwrap_or_else(|| ".".into());
