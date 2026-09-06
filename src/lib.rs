@@ -32,6 +32,45 @@ impl Index {
         self.revision.as_deref()
     }
 
+    /// Apply only Git file changes between the indexed revision and `new_revision`.
+    /// A missing or unrelated history falls back to a complete rebuild.
+    pub fn sync_git(&mut self, root: &Path, new_revision: &str) -> io::Result<()> {
+        let Some(old_revision) = self.revision.clone() else {
+            self.rebuild(root)?;
+            self.revision = Some(new_revision.to_owned());
+            return Ok(());
+        };
+        let output = Command::new("git")
+            .args([
+                "-C",
+                root.to_str().unwrap_or("."),
+                "diff",
+                "--name-status",
+                &old_revision,
+                new_revision,
+            ])
+            .output()?;
+        if !output.status.success() {
+            self.rebuild(root)?;
+            self.revision = Some(new_revision.to_owned());
+            return Ok(());
+        }
+        let changes = String::from_utf8_lossy(&output.stdout);
+        for line in changes.lines() {
+            let Some((status, path)) = line.split_once('\t') else {
+                continue;
+            };
+            let relative = Path::new(path);
+            if status.starts_with('D') {
+                self.remove_file(relative);
+            } else {
+                self.update_file(root, relative)?;
+            }
+        }
+        self.revision = Some(new_revision.to_owned());
+        Ok(())
+    }
+
     pub fn rebuild(&mut self, root: &Path) -> io::Result<()> {
         self.files.clear();
         self.terms.clear();
@@ -189,5 +228,34 @@ mod tests {
         assert_eq!(index.search("fresh", 5).len(), 1);
         index.remove_file(Path::new("lib.rs"));
         assert!(index.search("fresh", 5).is_empty());
+    }
+
+    #[test]
+    fn git_sync_updates_only_changed_files() {
+        let root = fixture();
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-C", root.to_str().unwrap()])
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        assert!(run(&["init", "-q"]).status.success());
+        assert!(run(&["config", "user.email", "test@example.invalid"])
+            .status
+            .success());
+        assert!(run(&["config", "user.name", "Test"]).status.success());
+        assert!(run(&["add", "lib.rs"]).status.success());
+        assert!(run(&["commit", "-qm", "initial"]).status.success());
+        let old = String::from_utf8(run(&["rev-parse", "HEAD"]).stdout).unwrap();
+        let old = old.trim();
+        let mut index = Index::build(&root).unwrap();
+        fs::write(root.join("lib.rs"), "pub fn changed_symbol() {}\n").unwrap();
+        assert!(run(&["commit", "-am", "changed"]).status.success());
+        let new = String::from_utf8(run(&["rev-parse", "HEAD"]).stdout).unwrap();
+        index.revision = Some(old.to_owned());
+        index.sync_git(&root, new.trim()).unwrap();
+        assert!(index.search("bounded", 5).is_empty());
+        assert_eq!(index.search("changed symbol", 5).len(), 1);
     }
 }
