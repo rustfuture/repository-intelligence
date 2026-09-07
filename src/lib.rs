@@ -119,7 +119,7 @@ impl Index {
             .iter()
             .map(|(k, v)| (k.clone(), v.len()))
             .collect();
-        top_terms.sort_by(|a, b| b.1.cmp(&a.1));
+        top_terms.sort_by_key(|(term, count)| (std::cmp::Reverse(*count), term.clone()));
         top_terms.truncate(5);
         let top_terms_str = top_terms
             .iter()
