@@ -60,8 +60,9 @@ The authored evaluation benchmark is located in `evaluation/questions.json`, wit
 ## Deliberate boundaries & non-claims
 
 - **No In-Binary Hybrid or Vector Search**: Vector embeddings and hybrid search algorithms exist only in the offline Python script `evaluation/evaluate_hybrid.py`. They are **not** integrated into the Rust product binary, library, or HTTP API.
-- **No Runtime Citation Verification**: In `--answer` mode, the prompt asks the external model to cite lines. The Rust product binary does **not** parse, validate, or cryptographically prove citations at runtime; citation presence is checked only as an offline test assertion via `./scripts/llm_answer_smoke.sh`.
-- **No Deep Binary Detection**: File filtering relies strictly on path names (`.git`, `target`, `node_modules`) and file extension matching. General byte-level content sniffing, null-byte scanning, or MIME detection are not implemented.
+- **Heuristic Citation Screening, Not Answer Verification**: The CLI screens some plain `path:line` tokens against retrieved text. This is not a complete citation parser and does not prove that an answer is supported by its sources. The lexical evaluator reports retrieval Recall@5 and MRR only, not answer or citation accuracy.
+- **File Access Policy**: Initial scans and incremental updates exclude hidden path components, common build/dependency directories, `.pem`/`.key` files, and named SSH private keys. Incremental updates reject absolute/parent paths and symlink components. This name-based policy is not a secret scanner and does not defend against a hostile concurrent filesystem mutation.
+- **Working-Tree Prototype**: Files are read from the working tree, not an immutable Git snapshot. A `-dirty` label is diagnostic, not a reproducible snapshot identifier. Commit-consistent indexing and complete rename handling remain unfinished.
 - **No Background Watcher**: Background filesystem events are not monitored; synchronization is triggered explicitly via CLI or HTTP `/reload`.
 - **No Production Hardening**: Authentication, TLS, rate limiting, and multi-tenant isolation remain out of scope for this local development prototype.
 
@@ -70,4 +71,3 @@ The authored evaluation benchmark is located in `evaluation/questions.json`, wit
 MIT. The evaluation corpus in this repository is authored specifically for this project.
 
 Architecture and limitations are documented in `docs/architecture.md`; the current baseline is summarized in `RELEASE_NOTES.md`. Run `python3 scripts/benchmark.py` for the local fixed-corpus latency measurement.
-
