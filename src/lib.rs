@@ -82,6 +82,19 @@ impl Index {
 
     pub fn update_file(&mut self, root: &Path, relative: &Path) -> io::Result<()> {
         self.remove_file(relative);
+        if !is_safe_relative(relative) {
+            return Ok(());
+        }
+        let mut checked = root.to_path_buf();
+        for component in relative.components() {
+            checked.push(component);
+            match fs::symlink_metadata(&checked) {
+                Ok(metadata) if metadata.file_type().is_symlink() => return Ok(()),
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(error),
+            }
+        }
         let path = root.join(relative);
         if path.is_file() && is_indexable(relative) {
             self.add_file(relative.to_path_buf(), fs::read_to_string(path)?);
@@ -159,7 +172,7 @@ impl Index {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-            
+
             // Skip symlinks
             if let Ok(meta) = fs::symlink_metadata(&path) {
                 if meta.file_type().is_symlink() {
@@ -168,24 +181,38 @@ impl Index {
             }
 
             let rel = path.strip_prefix(root).expect("walked under root");
+            if !is_safe_relative(rel) {
+                continue;
+            }
             let file_name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            
+
             if path.is_dir() {
                 // Sensitive dirs & typical ignores
-                if file_name.starts_with('.') || matches!(
-                    file_name,
-                    "target" | "node_modules" | "build" | "dist"
-                ) {
+                if file_name.starts_with('.')
+                    || matches!(file_name, "target" | "node_modules" | "build" | "dist")
+                {
                     continue;
                 }
                 self.walk(root, &path)?;
             } else if is_indexable(rel) {
                 // Sensitive files
-                if (file_name.starts_with('.') && file_name != ".github" && file_name != ".gitignore") || 
-                   file_name.ends_with(".pem") || file_name.ends_with(".key") || file_name == "id_rsa" ||
-                   file_name.ends_with(".p12") || file_name.ends_with(".pfx") || file_name.ends_with(".keystore") ||
-                   file_name == "credentials.json" || file_name == "service-account.json" || file_name == ".npmrc" || file_name == ".netrc" ||
-                   file_name == ".env" || file_name.starts_with(".env.") || file_name == "id_ed25519" {
+                if (file_name.starts_with('.')
+                    && file_name != ".github"
+                    && file_name != ".gitignore")
+                    || file_name.ends_with(".pem")
+                    || file_name.ends_with(".key")
+                    || file_name == "id_rsa"
+                    || file_name.ends_with(".p12")
+                    || file_name.ends_with(".pfx")
+                    || file_name.ends_with(".keystore")
+                    || file_name == "credentials.json"
+                    || file_name == "service-account.json"
+                    || file_name == ".npmrc"
+                    || file_name == ".netrc"
+                    || file_name == ".env"
+                    || file_name.starts_with(".env.")
+                    || file_name == "id_ed25519"
+                {
                     continue;
                 }
                 self.add_file(rel.to_path_buf(), fs::read_to_string(path)?);
@@ -217,10 +244,15 @@ fn git_revision(root: &Path) -> Option<String> {
         return None;
     }
     let mut revision = String::from_utf8(output.stdout).ok()?.trim().to_owned();
-    if revision.is_empty() { return None; }
-    
+    if revision.is_empty() {
+        return None;
+    }
+
     // Check if dirty
-    if let Ok(status) = Command::new("git").args(["-C", root.to_str()?, "status", "--porcelain"]).output() {
+    if let Ok(status) = Command::new("git")
+        .args(["-C", root.to_str()?, "status", "--porcelain"])
+        .output()
+    {
         if !status.stdout.is_empty() {
             revision.push_str("-dirty");
         }
@@ -230,6 +262,25 @@ fn git_revision(root: &Path) -> Option<String> {
 
 pub fn current_git_revision(root: &Path) -> Option<String> {
     git_revision(root)
+}
+
+fn is_safe_relative(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path.components().all(|component| {
+            let std::path::Component::Normal(name) = component else {
+                return false;
+            };
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            !name.starts_with('.')
+                && !matches!(
+                    name,
+                    "target" | "node_modules" | "build" | "dist" | "id_rsa" | "id_ed25519"
+                )
+                && !name.ends_with(".pem")
+                && !name.ends_with(".key")
+        })
 }
 
 fn is_indexable(path: &Path) -> bool {
@@ -323,5 +374,37 @@ mod tests {
         let stats = index.analytics();
         assert!(stats.contains(r#""files": 1"#));
         assert!(stats.contains(r#""lines": 1"#));
+    }
+
+    #[test]
+    fn incremental_updates_reject_sensitive_and_outside_paths() {
+        let root = fixture();
+        let mut index = Index::build(&root).unwrap();
+        for name in [".env", "private.key", "id_ed25519"] {
+            fs::write(root.join(name), "sensitivecanary").unwrap();
+            index.update_file(&root, Path::new(name)).unwrap();
+        }
+        index
+            .update_file(&root, Path::new("../outside.rs"))
+            .unwrap();
+        assert!(index.search("sensitivecanary", 5).is_empty());
+        assert!(Index::build(&root)
+            .unwrap()
+            .search("sensitivecanary", 5)
+            .is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn incremental_updates_skip_symlink_parents() {
+        let root = fixture();
+        let outside = fixture();
+        fs::write(outside.join("secret.rs"), "outsidecanary").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+        let mut index = Index::build(&root).unwrap();
+        index
+            .update_file(&root, Path::new("linked/secret.rs"))
+            .unwrap();
+        assert!(index.search("outsidecanary", 5).is_empty());
     }
 }
