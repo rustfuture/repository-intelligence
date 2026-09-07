@@ -22,7 +22,7 @@ def main() -> int:
             ranks.append(rank)
     recall = len(ranks) / len(questions)
     mrr = sum(1 / rank for rank in ranks) / len(questions)
-    print(json.dumps({"questions": len(questions), "recall_at_5": recall, "mrr": mrr, "citation_file_accuracy": recall}, indent=2))
+    print(json.dumps({"questions": len(questions), "recall_at_5": recall, "mrr": mrr}, indent=2))
     return 0
 
 
