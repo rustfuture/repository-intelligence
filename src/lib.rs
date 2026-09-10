@@ -95,6 +95,13 @@ impl Index {
                 Err(error) => return Err(error),
             }
         }
+        let file_name = relative
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        if is_sensitive_file_name(file_name) {
+            return Ok(());
+        }
         let path = root.join(relative);
         if path.is_file() && is_indexable(relative) {
             self.add_file(relative.to_path_buf(), fs::read_to_string(path)?);
@@ -196,23 +203,7 @@ impl Index {
                 self.walk(root, &path)?;
             } else if is_indexable(rel) {
                 // Sensitive files
-                if (file_name.starts_with('.')
-                    && file_name != ".github"
-                    && file_name != ".gitignore")
-                    || file_name.ends_with(".pem")
-                    || file_name.ends_with(".key")
-                    || file_name == "id_rsa"
-                    || file_name.ends_with(".p12")
-                    || file_name.ends_with(".pfx")
-                    || file_name.ends_with(".keystore")
-                    || file_name == "credentials.json"
-                    || file_name == "service-account.json"
-                    || file_name == ".npmrc"
-                    || file_name == ".netrc"
-                    || file_name == ".env"
-                    || file_name.starts_with(".env.")
-                    || file_name == "id_ed25519"
-                {
+                if is_sensitive_file_name(file_name) {
                     continue;
                 }
                 self.add_file(rel.to_path_buf(), fs::read_to_string(path)?);
@@ -288,6 +279,25 @@ fn is_indexable(path: &Path) -> bool {
         path.extension().and_then(|x| x.to_str()),
         Some("png" | "jpg" | "jpeg" | "gif" | "lock" | "bin")
     )
+}
+
+/// Single source of truth for file names that must never be indexed.
+/// Shared by the full walk and incremental updates so a scan and a rebase agree.
+fn is_sensitive_file_name(name: &str) -> bool {
+    (name.starts_with('.') && name != ".github" && name != ".gitignore")
+        || name.ends_with(".pem")
+        || name.ends_with(".key")
+        || name.ends_with(".p12")
+        || name.ends_with(".pfx")
+        || name.ends_with(".keystore")
+        || name == "id_rsa"
+        || name == "id_ed25519"
+        || name == "credentials.json"
+        || name == "service-account.json"
+        || name == ".npmrc"
+        || name == ".netrc"
+        || name == ".env"
+        || name.starts_with(".env.")
 }
 fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
@@ -406,5 +416,51 @@ mod tests {
             .update_file(&root, Path::new("linked/secret.rs"))
             .unwrap();
         assert!(index.search("outsidecanary", 5).is_empty());
+    }
+
+    #[test]
+    fn incremental_and_full_scan_agree_on_sensitive_files() {
+        let root = fixture();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let sensitive = [
+            "credentials.json",
+            "service-account.json",
+            "client.p12",
+            "client.pfx",
+            "release.keystore",
+            "sub/credentials.json",
+            "sub/client.p12",
+            "sub/.env",
+            "sub/.npmrc",
+        ];
+        for name in sensitive {
+            fs::write(root.join(name), "sensitivecanary").unwrap();
+        }
+        fs::write(root.join("sub/keep.rs"), "publiccanary").unwrap();
+
+        let mut index = Index::build(&root).unwrap();
+        assert!(index.search("sensitivecanary", 20).is_empty());
+        assert_eq!(index.search("publiccanary", 5).len(), 1);
+
+        for name in sensitive {
+            index.update_file(&root, Path::new(name)).unwrap();
+        }
+        index.update_file(&root, Path::new("sub/keep.rs")).unwrap();
+        assert!(index.search("sensitivecanary", 20).is_empty());
+        assert_eq!(index.search("publiccanary", 5).len(), 1);
+    }
+
+    #[test]
+    fn previously_indexed_sensitive_file_is_removed_on_update() {
+        let root = fixture();
+        let mut index = Index::build(&root).unwrap();
+        index.add_file(PathBuf::from("credentials.json"), "legacycanary".to_owned());
+        assert_eq!(index.search("legacycanary", 5).len(), 1);
+
+        fs::write(root.join("credentials.json"), "legacycanary").unwrap();
+        index
+            .update_file(&root, Path::new("credentials.json"))
+            .unwrap();
+        assert!(index.search("legacycanary", 5).is_empty());
     }
 }
