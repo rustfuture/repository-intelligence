@@ -66,6 +66,24 @@ The authored evaluation benchmark is located in `evaluation/questions.json`, wit
 - **No Background Watcher**: Background filesystem events are not monitored; synchronization is triggered explicitly via CLI or HTTP `/reload`.
 - **No Production Hardening**: Authentication, TLS, rate limiting, and multi-tenant isolation remain out of scope for this local development prototype.
 
+## Backlog (explicitly not completed)
+
+- **Immutable commit indexing**: index a pinned Git tree or commit blob instead of the working tree.
+- **Complete rename/add/delete consistency**: `Index::sync_git` currently parses `D` and treats other
+  statuses as updates; Git rename (`R`) status is not handled.
+- **Structured citation**: return machine-checkable citations rather than screening plain `path:line`
+  tokens.
+- **Answerability evaluation**: measure whether an answer is supported by its sources, beyond retrieval
+  Recall@5 and MRR.
+
+## File policy change (2026-09-10)
+
+`walk` and `update_file` now share a single sensitive-file policy
+(`is_sensitive_file_name`), so a full scan and an incremental update agree. Previously
+`credentials.json`, `service-account.json`, and `.p12`/`.pfx`/`.keystore` were excluded during the
+initial scan but could be indexed on an incremental update. Regression tests cover the nested and
+top-level cases, a previously indexed excluded file, and the full-vs-incremental agreement.
+
 ## License
 
 MIT. The evaluation corpus in this repository is authored specifically for this project.
