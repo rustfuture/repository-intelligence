@@ -284,6 +284,7 @@ fn is_indexable(path: &Path) -> bool {
 /// Single source of truth for file names that must never be indexed.
 /// Shared by the full walk and incremental updates so a scan and a rebase agree.
 fn is_sensitive_file_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
     (name.starts_with('.') && name != ".github" && name != ".gitignore")
         || name.ends_with(".pem")
         || name.ends_with(".key")
@@ -462,5 +463,67 @@ mod tests {
             .update_file(&root, Path::new("credentials.json"))
             .unwrap();
         assert!(index.search("legacycanary", 5).is_empty());
+    }
+
+    #[test]
+    fn sensitive_names_match_case_insensitively() {
+        for name in [
+            "CREDENTIALS.JSON",
+            "Service-Account.json",
+            "CLIENT.P12",
+            "CLIENT.PFX",
+            "RELEASE.KEYSTORE",
+            "ID_RSA",
+            "ID_ED25519",
+            "SERVER.PEM",
+            "SERVER.KEY",
+            ".ENV",
+            ".Env.local",
+        ] {
+            assert!(is_sensitive_file_name(name), "{name} must be sensitive");
+        }
+        for name in ["credentials.rs", "service.rs", "keep.p12.bak"] {
+            assert!(
+                !is_sensitive_file_name(name),
+                "{name} must not be sensitive"
+            );
+        }
+    }
+
+    #[test]
+    fn full_scan_and_update_agree_on_case_variant_sensitive_names() {
+        let root = fixture();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        let sensitive = [
+            "CREDENTIALS.JSON",
+            "Service-Account.json",
+            "CLIENT.P12",
+            "sub/RELEASE.PFX",
+            "sub/KEYSTORE.KEYSTORE",
+            "ID_RSA",
+        ];
+        for name in sensitive {
+            fs::write(root.join(name), "casecanary").unwrap();
+        }
+
+        let mut index = Index::build(&root).unwrap();
+        assert!(index.search("casecanary", 20).is_empty());
+        for name in sensitive {
+            index.update_file(&root, Path::new(name)).unwrap();
+        }
+        assert!(index.search("casecanary", 20).is_empty());
+    }
+
+    #[test]
+    fn update_file_case_alias_cannot_bypass_sensitive_policy() {
+        let root = fixture();
+        fs::write(root.join("credentials.json"), "aliascanary").unwrap();
+        let mut index = Index::build(&root).unwrap();
+        assert!(index.search("aliascanary", 5).is_empty());
+
+        index
+            .update_file(&root, Path::new("CREDENTIALS.JSON"))
+            .unwrap();
+        assert!(index.search("aliascanary", 5).is_empty());
     }
 }
