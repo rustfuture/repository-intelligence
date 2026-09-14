@@ -9,6 +9,7 @@ cargo check --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 evaluation/evaluate.py
+python3 evaluation/evaluate_modes.py
 
 port="${RI_VALIDATION_PORT:-28184}"
 cargo run --quiet --locked -- --serve "127.0.0.1:${port}" . >"${TMPDIR:-/tmp}/repository-intelligence-${port}.log" 2>&1 &

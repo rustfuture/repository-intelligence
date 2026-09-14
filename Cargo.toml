@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
-description = "Deterministic, line-cited lexical search baseline for source repositories"
+description = "Local repository indexing, hybrid retrieval, and evidence-grounded question answering"
 
 [dependencies]
-

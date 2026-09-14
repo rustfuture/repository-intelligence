@@ -2,11 +2,13 @@ pub mod llm;
 
 use std::{
     collections::{HashMap, HashSet},
-    fs, io,
+    fmt, fs, io,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
+/// A line-level lexical match retained for backwards-compatible CLI output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hit {
     pub path: PathBuf,
@@ -15,18 +17,157 @@ pub struct Hit {
     pub text: String,
 }
 
-#[derive(Debug, Default)]
+/// Retrieval strategy used by [`Index::search_evidence`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetrievalMode {
+    Lexical,
+    Semantic,
+    Hybrid,
+}
+
+impl RetrievalMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lexical => "lexical",
+            Self::Semantic => "semantic",
+            Self::Hybrid => "hybrid",
+        }
+    }
+}
+
+/// A source span that can be shown to a user or passed to an answer provider.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Evidence {
+    pub path: PathBuf,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub score: f32,
+    pub source: String,
+    pub kind: String,
+    pub symbol: Option<String>,
+    pub text: String,
+}
+
+impl Evidence {
+    pub fn citation(&self) -> String {
+        if self.start_line == self.end_line {
+            format!("{}:{}", self.path.display(), self.start_line)
+        } else {
+            format!(
+                "{}:{}-{}",
+                self.path.display(),
+                self.start_line,
+                self.end_line
+            )
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitRecord {
+    pub sha: String,
+    pub date: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone)]
+struct Chunk {
+    path: PathBuf,
+    start_line: usize,
+    end_line: usize,
+    text: String,
+    kind: String,
+    symbol: Option<String>,
+}
+
+/// Provider abstraction for semantic retrieval. The default provider is
+/// deterministic and dependency-free, so indexing and tests work offline.
+pub trait EmbeddingProvider: Send + Sync {
+    fn name(&self) -> &str;
+    fn dimension(&self) -> usize;
+    fn embed(&self, text: &str) -> Vec<f32>;
+}
+
+/// A stable hashed-token embedding. It is not a language model, but gives the
+/// product a reproducible semantic-retrieval baseline and a replaceable seam
+/// for a real local or hosted embedding service.
+#[derive(Debug, Clone)]
+pub struct HashEmbedding {
+    dimension: usize,
+}
+
+impl HashEmbedding {
+    pub fn new(dimension: usize) -> Self {
+        Self {
+            dimension: dimension.max(8),
+        }
+    }
+}
+
+impl Default for HashEmbedding {
+    fn default() -> Self {
+        Self::new(128)
+    }
+}
+
+impl EmbeddingProvider for HashEmbedding {
+    fn name(&self) -> &str {
+        "hash-token-v1"
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    fn embed(&self, text: &str) -> Vec<f32> {
+        let mut vector = vec![0.0; self.dimension];
+        for token in tokenize(text) {
+            let hash = stable_hash(token.as_bytes());
+            let slot = (hash as usize) % self.dimension;
+            let sign = if hash & 1 == 0 { 1.0 } else { -1.0 };
+            vector[slot] += sign;
+        }
+        normalize(&mut vector);
+        vector
+    }
+}
+
 pub struct Index {
     files: HashMap<PathBuf, Vec<String>>,
     terms: HashMap<String, HashSet<(PathBuf, usize)>>,
+    chunks: HashMap<PathBuf, Vec<Chunk>>,
+    file_hashes: HashMap<PathBuf, u64>,
     revision: Option<String>,
+    commits: Vec<CommitRecord>,
+    embedding: Arc<dyn EmbeddingProvider>,
+    vectors: HashMap<PathBuf, Vec<Vec<f32>>>,
+}
+
+impl Default for Index {
+    fn default() -> Self {
+        Self::with_embedding(Arc::new(HashEmbedding::default()))
+    }
 }
 
 impl Index {
+    pub fn with_embedding(embedding: Arc<dyn EmbeddingProvider>) -> Self {
+        Self {
+            files: HashMap::new(),
+            terms: HashMap::new(),
+            chunks: HashMap::new(),
+            file_hashes: HashMap::new(),
+            revision: None,
+            commits: Vec::new(),
+            embedding,
+            vectors: HashMap::new(),
+        }
+    }
+
     pub fn build(root: &Path) -> io::Result<Self> {
         let mut index = Self::default();
         index.rebuild(root)?;
         index.revision = git_revision(root);
+        index.refresh_commits(root);
         Ok(index)
     }
 
@@ -34,49 +175,133 @@ impl Index {
         self.revision.as_deref()
     }
 
-    /// Apply only Git file changes between the indexed revision and `new_revision`.
-    /// A missing or unrelated history falls back to a complete rebuild.
+    pub fn embedding_provider(&self) -> &str {
+        self.embedding.name()
+    }
+
+    pub fn file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    pub fn chunk_count(&self) -> usize {
+        self.chunks.values().map(Vec::len).sum()
+    }
+
+    pub fn commit_count(&self) -> usize {
+        self.commits.len()
+    }
+
+    /// Apply Git changes between revisions. Renames are handled as a delete
+    /// followed by an update. A missing/unrelated history falls back to a
+    /// safe worktree refresh.
     pub fn sync_git(&mut self, root: &Path, new_revision: &str) -> io::Result<()> {
+        if new_revision.ends_with("-dirty") {
+            self.sync_worktree(root)?;
+            self.refresh_commits(root);
+            self.revision = Some(new_revision.to_owned());
+            return Ok(());
+        }
         let Some(old_revision) = self.revision.clone() else {
             self.rebuild(root)?;
             self.revision = Some(new_revision.to_owned());
+            self.refresh_commits(root);
             return Ok(());
         };
+        let old_revision = old_revision.trim_end_matches("-dirty");
         let output = Command::new("git")
             .args([
                 "-C",
                 root.to_str().unwrap_or("."),
                 "diff",
                 "--name-status",
-                &old_revision,
-                new_revision,
+                "-z",
+                "--find-renames",
+                old_revision,
+                new_revision.trim_end_matches("-dirty"),
             ])
             .output()?;
         if !output.status.success() {
-            self.rebuild(root)?;
-            self.revision = Some(new_revision.to_owned());
+            self.sync_worktree(root)?;
+            self.refresh_commits(root);
             return Ok(());
         }
-        let changes = String::from_utf8_lossy(&output.stdout);
-        for line in changes.lines() {
-            let Some((status, path)) = line.split_once('\t') else {
-                continue;
-            };
-            let relative = Path::new(path);
-            if status.starts_with('D') {
-                self.remove_file(relative);
-            } else {
-                self.update_file(root, relative)?;
+        let diff_output = String::from_utf8_lossy(&output.stdout);
+        let fields: Vec<_> = diff_output
+            .split('\0')
+            .filter(|field| !field.is_empty())
+            .collect();
+        let mut cursor = 0;
+        while cursor < fields.len() {
+            let status = fields[cursor];
+            cursor += 1;
+            match status.chars().next() {
+                Some('D') => {
+                    if let Some(path) = fields.get(cursor) {
+                        self.remove_file(Path::new(path));
+                    }
+                    cursor += 1;
+                }
+                Some('R') => {
+                    if let Some(old_path) = fields.get(cursor) {
+                        self.remove_file(Path::new(old_path));
+                    }
+                    cursor += 1;
+                    if let Some(new_path) = fields.get(cursor) {
+                        self.update_file(root, Path::new(new_path))?;
+                    }
+                    cursor += 1;
+                }
+                Some('C') => {
+                    cursor += 1;
+                    if let Some(new_path) = fields.get(cursor) {
+                        self.update_file(root, Path::new(new_path))?;
+                    }
+                    cursor += 1;
+                }
+                Some('A' | 'M' | 'T') => {
+                    if let Some(path) = fields.get(cursor) {
+                        self.update_file(root, Path::new(path))?;
+                    }
+                    cursor += 1;
+                }
+                _ => cursor += 1,
             }
         }
         self.revision = Some(new_revision.to_owned());
+        self.refresh_commits(root);
+        Ok(())
+    }
+
+    /// Compare the current worktree against stored file hashes and only read
+    /// changed files. This also removes files that disappeared outside Git.
+    pub fn sync_worktree(&mut self, root: &Path) -> io::Result<()> {
+        let mut current = HashMap::new();
+        collect_files(root, root, &mut current)?;
+        let previous: Vec<_> = self.file_hashes.keys().cloned().collect();
+        for path in previous {
+            if !current.contains_key(&path) {
+                self.remove_file(&path);
+            }
+        }
+        for (path, hash) in current {
+            if self.file_hashes.get(&path) != Some(&hash) {
+                self.update_file(root, &path)?;
+            }
+        }
+        self.revision = git_revision(root);
+        self.refresh_commits(root);
         Ok(())
     }
 
     pub fn rebuild(&mut self, root: &Path) -> io::Result<()> {
         self.files.clear();
         self.terms.clear();
+        self.chunks.clear();
+        self.file_hashes.clear();
+        self.vectors.clear();
+        self.commits.clear();
         self.walk(root, root)?;
+        self.refresh_commits(root);
         Ok(())
     }
 
@@ -104,13 +329,18 @@ impl Index {
         }
         let path = root.join(relative);
         if path.is_file() && is_indexable(relative) {
-            self.add_file(relative.to_path_buf(), fs::read_to_string(path)?);
+            if let Some(content) = read_source(&path)? {
+                self.add_file(relative.to_path_buf(), content);
+            }
         }
         Ok(())
     }
 
     pub fn remove_file(&mut self, relative: &Path) {
         self.files.remove(relative);
+        self.file_hashes.remove(relative);
+        self.chunks.remove(relative);
+        self.vectors.remove(relative);
         self.terms.retain(|_, refs| {
             refs.retain(|(p, _)| p != relative);
             !refs.is_empty()
@@ -120,7 +350,8 @@ impl Index {
     pub fn analytics(&self) -> String {
         let file_count = self.files.len();
         let term_count = self.terms.len();
-        let total_lines: usize = self.files.values().map(|lines| lines.len()).sum();
+        let total_lines: usize = self.files.values().map(Vec::len).sum();
+        let chunk_count = self.chunk_count();
         let mut top_terms: Vec<_> = self
             .terms
             .iter()
@@ -134,9 +365,110 @@ impl Index {
             .collect::<Vec<_>>()
             .join(", ");
         format!(
-            r#"{{"files": {}, "lines": {}, "unique_terms": {}, "top_terms": "{}"}}"#,
-            file_count, total_lines, term_count, top_terms_str
+            r#"{{"files": {}, "lines": {}, "chunks": {}, "commits": {}, "unique_terms": {}, "embedding_provider": "{}", "embedding_dimension": {}, "top_terms": "{}"}}"#,
+            file_count,
+            total_lines,
+            chunk_count,
+            self.commit_count(),
+            term_count,
+            json_escape(self.embedding.name()),
+            self.embedding.dimension(),
+            json_escape(&top_terms_str)
         )
+    }
+
+    /// Save source content and metadata in a portable, deterministic index
+    /// format. Embeddings are recomputed on load through the provider seam.
+    pub fn save_to(&self, path: &Path) -> io::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = String::from("RI_INDEX_V1\n");
+        output.push_str("revision\t");
+        output.push_str(&hex_encode(self.revision.as_deref().unwrap_or("")));
+        output.push('\n');
+        let mut paths: Vec<_> = self.files.keys().collect();
+        paths.sort();
+        for relative in paths {
+            let content = self
+                .files
+                .get(relative)
+                .map(|lines| lines.join("\n"))
+                .unwrap_or_default();
+            output.push_str("file\t");
+            output.push_str(&hex_encode(&relative.to_string_lossy()));
+            output.push('\t');
+            output.push_str(&hex_encode(&content));
+            output.push('\n');
+        }
+        for commit in &self.commits {
+            output.push_str("commit\t");
+            output.push_str(&hex_encode(&commit.sha));
+            output.push('\t');
+            output.push_str(&hex_encode(&commit.date));
+            output.push('\t');
+            output.push_str(&hex_encode(&commit.subject));
+            output.push('\n');
+        }
+        fs::write(path, output)
+    }
+
+    pub fn load_from(path: &Path) -> io::Result<Self> {
+        let content = fs::read_to_string(path)?;
+        let mut lines = content.lines();
+        if lines.next() != Some("RI_INDEX_V1") {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "unsupported repository-intelligence index format",
+            ));
+        }
+        let mut index = Self::default();
+        for line in lines {
+            let fields: Vec<_> = line.split('\t').collect();
+            match fields.as_slice() {
+                ["revision", encoded] => {
+                    let revision = hex_decode(encoded)?;
+                    if !revision.is_empty() {
+                        index.revision = Some(revision);
+                    }
+                }
+                ["file", encoded_path, encoded_content] => {
+                    if encoded_path.len() > 4096 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "index path field exceeds safety limit",
+                        ));
+                    }
+                    let relative = PathBuf::from(hex_decode(encoded_path)?);
+                    let source = hex_decode(encoded_content)?;
+                    let file_name = relative
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+                    if is_safe_relative(&relative)
+                        && is_indexable(&relative)
+                        && !is_sensitive_file_name(file_name)
+                    {
+                        index.remove_file(&relative);
+                        index.add_file(relative, source);
+                    }
+                }
+                ["commit", encoded_sha, encoded_date, encoded_subject] => {
+                    index.commits.push(CommitRecord {
+                        sha: hex_decode(encoded_sha)?,
+                        date: hex_decode(encoded_date)?,
+                        subject: hex_decode(encoded_subject)?,
+                    });
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "malformed repository-intelligence index record",
+                    ));
+                }
+            }
+        }
+        Ok(index)
     }
 
     pub fn search(&self, query: &str, limit: usize) -> Vec<Hit> {
@@ -175,44 +507,207 @@ impl Index {
         hits
     }
 
+    pub fn search_evidence(&self, query: &str, limit: usize, mode: RetrievalMode) -> Vec<Evidence> {
+        if tokenize(query).is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        match mode {
+            RetrievalMode::Lexical => self.lexical_evidence(query, limit),
+            RetrievalMode::Semantic => self.semantic_evidence(query, limit),
+            RetrievalMode::Hybrid => self.hybrid_evidence(query, limit),
+        }
+    }
+
+    pub fn build_evidence(&self, query: &str, limit: usize) -> Vec<Evidence> {
+        let mut evidence = self.search_evidence(query, limit, RetrievalMode::Hybrid);
+        if limit == 0 {
+            return evidence;
+        }
+        // Grounded answer context must contain a lexical anchor. A vector
+        // provider may legitimately rank a semantically similar distractor
+        // above the exact source span, so preserve one lexical hit explicitly.
+        if let Some(anchor) = self.lexical_evidence(query, 1).into_iter().next() {
+            let already_present = evidence
+                .iter()
+                .any(|item| item.path == anchor.path && item.start_line == anchor.start_line);
+            if !already_present {
+                if evidence.len() >= limit {
+                    evidence.pop();
+                }
+                evidence.insert(0, anchor);
+            }
+        }
+        evidence
+    }
+
+    pub fn answer_context(&self, query: &str, limit: usize) -> Option<String> {
+        let evidence = self.build_evidence(query, limit);
+        // The deterministic hash embedding is deliberately conservative: an
+        // answer requires at least one lexical anchor as well as fused hits.
+        // This prevents an unrelated positive vector collision from becoming
+        // model context for an unanswerable question.
+        if evidence.is_empty() || self.lexical_evidence(query, 1).is_empty() {
+            return None;
+        }
+        Some(format_evidence(&evidence))
+    }
+
+    pub fn search_commits(&self, query: &str, limit: usize) -> Vec<CommitRecord> {
+        let terms = tokenize(query);
+        if terms.is_empty() {
+            return Vec::new();
+        }
+        let mut ranked: Vec<(usize, &CommitRecord)> = self
+            .commits
+            .iter()
+            .filter_map(|commit| {
+                let text = format!("{} {}", commit.subject, commit.date);
+                let score = terms
+                    .iter()
+                    .map(|term| {
+                        tokenize(&text)
+                            .iter()
+                            .filter(|token| *token == term)
+                            .count()
+                    })
+                    .sum::<usize>();
+                (score > 0).then_some((score, commit))
+            })
+            .collect();
+        ranked.sort_by(|(a_score, a), (b_score, b)| {
+            b_score.cmp(a_score).then_with(|| a.sha.cmp(&b.sha))
+        });
+        ranked
+            .into_iter()
+            .take(limit)
+            .map(|(_, commit)| commit.clone())
+            .collect()
+    }
+
+    fn lexical_evidence(&self, query: &str, limit: usize) -> Vec<Evidence> {
+        let terms = tokenize(query);
+        let mut scored: Vec<(usize, &Chunk)> = self
+            .chunks
+            .values()
+            .flatten()
+            .filter_map(|chunk| {
+                let score = terms
+                    .iter()
+                    .map(|term| tokenize(&chunk.text).iter().filter(|t| *t == term).count())
+                    .sum::<usize>();
+                (score > 0).then_some((score, chunk))
+            })
+            .collect();
+        scored.sort_by(|(a_score, a), (b_score, b)| {
+            b_score
+                .cmp(a_score)
+                .then_with(|| a.path.cmp(&b.path))
+                .then(a.start_line.cmp(&b.start_line))
+        });
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(score, chunk)| evidence_from_chunk(chunk, score as f32, "lexical"))
+            .collect()
+    }
+
+    fn semantic_evidence(&self, query: &str, limit: usize) -> Vec<Evidence> {
+        let query_vector = self.embedding.embed(query);
+        let mut scored = Vec::new();
+        for (path, chunks) in &self.chunks {
+            let Some(vectors) = self.vectors.get(path) else {
+                continue;
+            };
+            for (chunk, vector) in chunks.iter().zip(vectors) {
+                let score = cosine(&query_vector, vector);
+                if score > 0.0 {
+                    scored.push((score, chunk));
+                }
+            }
+        }
+        scored.sort_by(|(a_score, a), (b_score, b)| {
+            b_score
+                .partial_cmp(a_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path))
+                .then(a.start_line.cmp(&b.start_line))
+        });
+        scored
+            .into_iter()
+            .take(limit)
+            .map(|(score, chunk)| evidence_from_chunk(chunk, score, "semantic"))
+            .collect()
+    }
+
+    fn hybrid_evidence(&self, query: &str, limit: usize) -> Vec<Evidence> {
+        let candidate_limit = limit.saturating_mul(4).max(20);
+        let lexical = self.lexical_evidence(query, candidate_limit);
+        let semantic = self.semantic_evidence(query, candidate_limit);
+        let mut fused: HashMap<(PathBuf, usize), (f32, Evidence)> = HashMap::new();
+        // Reciprocal Rank Fusion uses a documented constant k=60; no tuned
+        // magic weight can hide whether either retriever helped.
+        for (rank, item) in lexical.into_iter().enumerate() {
+            let key = (item.path.clone(), item.start_line);
+            let entry = fused.entry(key).or_insert((0.0, item.clone()));
+            entry.0 += 1.0 / (60.0 + rank as f32 + 1.0);
+            entry.1.source = "hybrid".to_owned();
+        }
+        for (rank, item) in semantic.into_iter().enumerate() {
+            let key = (item.path.clone(), item.start_line);
+            let entry = fused.entry(key).or_insert((0.0, item.clone()));
+            entry.0 += 1.0 / (60.0 + rank as f32 + 1.0);
+            entry.1.source = "hybrid".to_owned();
+        }
+        let mut ranked: Vec<_> = fused.into_values().collect();
+        ranked.sort_by(|(a_score, a), (b_score, b)| {
+            b_score
+                .partial_cmp(a_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.path.cmp(&b.path))
+                .then(a.start_line.cmp(&b.start_line))
+        });
+        ranked
+            .into_iter()
+            .take(limit)
+            .map(|(score, mut evidence)| {
+                evidence.score = score;
+                evidence
+            })
+            .collect()
+    }
+
     fn walk(&mut self, root: &Path, dir: &Path) -> io::Result<()> {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
-
-            // Skip symlinks
             if let Ok(meta) = fs::symlink_metadata(&path) {
                 if meta.file_type().is_symlink() {
                     continue;
                 }
             }
-
             let rel = path.strip_prefix(root).expect("walked under root");
             if !is_safe_relative(rel) {
                 continue;
             }
             let file_name = rel.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
             if path.is_dir() {
-                // Sensitive dirs & typical ignores
                 if file_name.starts_with('.')
                     || matches!(file_name, "target" | "node_modules" | "build" | "dist")
                 {
                     continue;
                 }
                 self.walk(root, &path)?;
-            } else if is_indexable(rel) {
-                // Sensitive files
-                if is_sensitive_file_name(file_name) {
-                    continue;
+            } else if is_indexable(rel) && !is_sensitive_file_name(file_name) {
+                if let Some(content) = read_source(&path)? {
+                    self.add_file(rel.to_path_buf(), content);
                 }
-                self.add_file(rel.to_path_buf(), fs::read_to_string(path)?);
             }
         }
         Ok(())
     }
 
     fn add_file(&mut self, relative: PathBuf, content: String) {
+        let hash = stable_hash(content.as_bytes());
         let lines: Vec<String> = content.lines().map(String::from).collect();
         for (number, line) in lines.iter().enumerate() {
             for term in tokenize(line) {
@@ -222,7 +717,210 @@ impl Index {
                     .insert((relative.clone(), number + 1));
             }
         }
+        let chunks = chunk_file(&relative, &lines);
+        let vectors = chunks
+            .iter()
+            .map(|chunk| self.embedding.embed(&chunk.text))
+            .collect();
+        self.file_hashes.insert(relative.clone(), hash);
+        self.chunks.insert(relative.clone(), chunks);
+        self.vectors.insert(relative.clone(), vectors);
         self.files.insert(relative, lines);
+    }
+
+    fn refresh_commits(&mut self, root: &Path) {
+        self.commits.clear();
+        let Ok(output) = Command::new("git")
+            .args([
+                "-C",
+                root.to_str().unwrap_or("."),
+                "log",
+                "-n",
+                "100",
+                "--date=short",
+                "--format=%H%x09%ad%x09%s",
+            ])
+            .output()
+        else {
+            return;
+        };
+        if !output.status.success() {
+            return;
+        }
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Some((sha, rest)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some((date, subject)) = rest.split_once('\t') else {
+                continue;
+            };
+            self.commits.push(CommitRecord {
+                sha: sha.to_owned(),
+                date: date.to_owned(),
+                subject: subject.to_owned(),
+            });
+        }
+    }
+}
+
+fn evidence_from_chunk(chunk: &Chunk, score: f32, source: &str) -> Evidence {
+    Evidence {
+        path: chunk.path.clone(),
+        start_line: chunk.start_line,
+        end_line: chunk.end_line,
+        score,
+        source: source.to_owned(),
+        kind: chunk.kind.clone(),
+        symbol: chunk.symbol.clone(),
+        text: chunk.text.clone(),
+    }
+}
+
+pub fn format_evidence(evidence: &[Evidence]) -> String {
+    evidence
+        .iter()
+        .map(|item| format!("[{}] {}\n{}", item.citation(), item.kind, item.text.trim()))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn chunk_file(path: &Path, lines: &[String]) -> Vec<Chunk> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let mut declarations = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        if let Some((kind, symbol)) = declaration(line) {
+            declarations.push((index, kind, symbol));
+        }
+    }
+    if declarations.is_empty() {
+        return lines
+            .chunks(40)
+            .enumerate()
+            .map(|(chunk_index, block)| {
+                let start = chunk_index * 40 + 1;
+                Chunk {
+                    path: path.to_path_buf(),
+                    start_line: start,
+                    end_line: start + block.len() - 1,
+                    text: block.join("\n"),
+                    kind: "text".to_owned(),
+                    symbol: None,
+                }
+            })
+            .collect();
+    }
+    let mut chunks = Vec::new();
+    let mut cursor = 0;
+    for (position, (start, kind, symbol)) in declarations.iter().enumerate() {
+        if *start > cursor {
+            chunks.extend(generic_chunks(path, &lines[cursor..*start], cursor + 1));
+        }
+        let next = declarations
+            .get(position + 1)
+            .map(|item| item.0)
+            .unwrap_or(lines.len());
+        let end = next.min(start + 80);
+        let block = &lines[*start..end];
+        chunks.push(Chunk {
+            path: path.to_path_buf(),
+            start_line: *start + 1,
+            end_line: *start + block.len(),
+            text: block.join("\n"),
+            kind: kind.clone(),
+            symbol: symbol.clone(),
+        });
+        cursor = end;
+    }
+    if cursor < lines.len() {
+        chunks.extend(generic_chunks(path, &lines[cursor..], cursor + 1));
+    }
+    chunks
+}
+
+fn generic_chunks(path: &Path, lines: &[String], first_line: usize) -> Vec<Chunk> {
+    lines
+        .chunks(40)
+        .enumerate()
+        .map(|(chunk_index, block)| {
+            let start = first_line + chunk_index * 40;
+            Chunk {
+                path: path.to_path_buf(),
+                start_line: start,
+                end_line: start + block.len() - 1,
+                text: block.join("\n"),
+                kind: "text".to_owned(),
+                symbol: None,
+            }
+        })
+        .collect()
+}
+
+fn declaration(line: &str) -> Option<(String, Option<String>)> {
+    let trimmed = line.trim_start();
+    let patterns = [
+        ("function", "fn "),
+        ("function", "def "),
+        ("class", "class "),
+        ("struct", "struct "),
+        ("trait", "trait "),
+        ("impl", "impl "),
+        ("function", "function "),
+    ];
+    for (kind, marker) in patterns {
+        if let Some(position) = trimmed.find(marker) {
+            if position > 0 && trimmed.as_bytes()[position - 1].is_ascii_alphanumeric() {
+                continue;
+            }
+            let rest = &trimmed[position + marker.len()..];
+            let name: String = rest
+                .chars()
+                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+                .collect();
+            return Some((kind.to_owned(), (!name.is_empty()).then_some(name)));
+        }
+    }
+    None
+}
+
+fn collect_files(root: &Path, dir: &Path, files: &mut HashMap<PathBuf, u64>) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if let Ok(meta) = fs::symlink_metadata(&path) {
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+        }
+        let relative = path.strip_prefix(root).expect("walked under root");
+        if !is_safe_relative(relative) {
+            continue;
+        }
+        let name = relative
+            .file_name()
+            .and_then(|item| item.to_str())
+            .unwrap_or("");
+        if path.is_dir() {
+            if !name.starts_with('.')
+                && !matches!(name, "target" | "node_modules" | "build" | "dist")
+            {
+                collect_files(root, &path, files)?;
+            }
+        } else if is_indexable(relative) && !is_sensitive_file_name(name) {
+            if let Some(content) = read_source(&path)? {
+                files.insert(relative.to_path_buf(), stable_hash(content.as_bytes()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_source(path: &Path) -> io::Result<Option<String>> {
+    let bytes = fs::read(path)?;
+    match String::from_utf8(bytes) {
+        Ok(content) => Ok(Some(content)),
+        Err(_) => Ok(None),
     }
 }
 
@@ -238,8 +936,6 @@ fn git_revision(root: &Path) -> Option<String> {
     if revision.is_empty() {
         return None;
     }
-
-    // Check if dirty
     if let Ok(status) = Command::new("git")
         .args(["-C", root.to_str()?, "status", "--porcelain"])
         .output()
@@ -277,34 +973,99 @@ fn is_safe_relative(path: &Path) -> bool {
 fn is_indexable(path: &Path) -> bool {
     !matches!(
         path.extension().and_then(|x| x.to_str()),
-        Some("png" | "jpg" | "jpeg" | "gif" | "lock" | "bin")
+        Some("png" | "jpg" | "jpeg" | "gif" | "lock" | "bin" | "ico" | "pdf" | "zip")
     )
 }
 
-/// Single source of truth for file names that must never be indexed.
-/// Shared by the full walk and incremental updates so a scan and a rebase agree.
 fn is_sensitive_file_name(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
+    let lower = name.to_ascii_lowercase();
     (name.starts_with('.') && name != ".github" && name != ".gitignore")
-        || name.ends_with(".pem")
-        || name.ends_with(".key")
-        || name.ends_with(".p12")
-        || name.ends_with(".pfx")
-        || name.ends_with(".keystore")
-        || name == "id_rsa"
-        || name == "id_ed25519"
-        || name == "credentials.json"
-        || name == "service-account.json"
-        || name == ".npmrc"
-        || name == ".netrc"
-        || name == ".env"
-        || name.starts_with(".env.")
+        || lower.ends_with(".pem")
+        || lower.ends_with(".key")
+        || lower.ends_with(".p12")
+        || lower.ends_with(".pfx")
+        || lower.ends_with(".keystore")
+        || matches!(
+            lower.as_str(),
+            "id_rsa"
+                | "id_ed25519"
+                | "credentials.json"
+                | "service-account.json"
+                | ".npmrc"
+                | ".netrc"
+                | ".env"
+        )
+        || lower.starts_with(".env.")
 }
+
 fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| t.len() >= 2)
+        .filter(|token| token.len() >= 2)
         .map(str::to_ascii_lowercase)
         .collect()
+}
+
+fn stable_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn normalize(vector: &mut [f32]) {
+    let norm = vector.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for value in vector {
+            *value /= norm;
+        }
+    }
+}
+
+fn cosine(left: &[f32], right: &[f32]) -> f32 {
+    left.iter().zip(right).map(|(a, b)| a * b).sum()
+}
+
+fn hex_encode(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn hex_decode(value: &str) -> io::Result<String> {
+    if value.len() % 2 != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "odd-length hex field",
+        ));
+    }
+    let mut bytes = Vec::with_capacity(value.len() / 2);
+    for pair in value.as_bytes().chunks_exact(2) {
+        let text = std::str::from_utf8(pair)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid hex field"))?;
+        let byte = u8::from_str_radix(text, 16)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "invalid hex field"))?;
+        bytes.push(byte);
+    }
+    String::from_utf8(bytes)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "non-utf8 index field"))
+}
+
+fn json_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+}
+
+impl fmt::Display for RetrievalMode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -314,6 +1075,7 @@ mod tests {
         fs,
         time::{SystemTime, UNIX_EPOCH},
     };
+
     fn fixture() -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "ri-{}",
@@ -328,6 +1090,7 @@ mod tests {
         fs::write(path.join("target/ignored.rs"), "bounded_worker").unwrap();
         path
     }
+
     #[test]
     fn returns_line_cited_hits_and_skips_target() {
         let root = fixture();
@@ -337,6 +1100,7 @@ mod tests {
         assert_eq!(hits[0].path, PathBuf::from("lib.rs"));
         assert_eq!(hits[0].line, 1);
     }
+
     #[test]
     fn update_and_delete_change_results() {
         let root = fixture();
@@ -376,47 +1140,67 @@ mod tests {
         index.sync_git(&root, new.trim()).unwrap();
         assert!(index.search("bounded", 5).is_empty());
         assert_eq!(index.search("changed symbol", 5).len(), 1);
+        assert!(index.commit_count() >= 2);
+        assert_eq!(index.search_commits("changed", 5).len(), 1);
     }
 
     #[test]
-    fn analytics_returns_stats() {
+    fn analytics_returns_chunk_and_embedding_stats() {
         let root = fixture();
         let index = Index::build(&root).unwrap();
         let stats = index.analytics();
         assert!(stats.contains(r#""files": 1"#));
-        assert!(stats.contains(r#""lines": 1"#));
+        assert!(stats.contains(r#""chunks": 1"#));
+        assert!(stats.contains("hash-token-v1"));
     }
 
     #[test]
-    fn incremental_updates_reject_sensitive_and_outside_paths() {
+    fn semantic_and_hybrid_return_citable_evidence() {
         let root = fixture();
-        let mut index = Index::build(&root).unwrap();
-        for name in [".env", "private.key", "id_ed25519"] {
-            fs::write(root.join(name), "sensitivecanary").unwrap();
-            index.update_file(&root, Path::new(name)).unwrap();
-        }
-        index
-            .update_file(&root, Path::new("../outside.rs"))
-            .unwrap();
-        assert!(index.search("sensitivecanary", 5).is_empty());
-        assert!(Index::build(&root)
-            .unwrap()
-            .search("sensitivecanary", 5)
-            .is_empty());
+        let index = Index::build(&root).unwrap();
+        let semantic = index.search_evidence("bounded worker", 5, RetrievalMode::Semantic);
+        assert!(!semantic.is_empty());
+        assert_eq!(semantic[0].citation(), "lib.rs:1");
+        let hybrid = index.build_evidence("bounded worker", 5);
+        assert!(!hybrid.is_empty());
+        assert_eq!(hybrid[0].source, "hybrid");
     }
 
-    #[cfg(unix)]
     #[test]
-    fn incremental_updates_skip_symlink_parents() {
+    fn no_evidence_is_explicitly_unanswerable() {
         let root = fixture();
-        let outside = fixture();
-        fs::write(outside.join("secret.rs"), "outsidecanary").unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+        let index = Index::build(&root).unwrap();
+        assert!(index
+            .answer_context("quantum database migration", 5)
+            .is_none());
+    }
+
+    #[test]
+    fn save_and_load_preserve_search_and_revision() {
+        let root = fixture();
+        let index = Index::build(&root).unwrap();
+        let path = root.join("ri.index");
+        index.save_to(&path).unwrap();
+        let loaded = Index::load_from(&path).unwrap();
+        assert_eq!(
+            loaded.search("bounded worker", 5),
+            index.search("bounded worker", 5)
+        );
+        assert_eq!(loaded.revision(), index.revision());
+    }
+
+    #[test]
+    fn loading_an_index_reapplies_sensitive_file_policy() {
+        let root = fixture();
         let mut index = Index::build(&root).unwrap();
-        index
-            .update_file(&root, Path::new("linked/secret.rs"))
-            .unwrap();
-        assert!(index.search("outsidecanary", 5).is_empty());
+        index.add_file(
+            PathBuf::from("credentials.json"),
+            "should-not-leak".to_owned(),
+        );
+        let path = root.join("saved.ri");
+        index.save_to(&path).unwrap();
+        let loaded = Index::load_from(&path).unwrap();
+        assert!(loaded.search("should not leak", 5).is_empty());
     }
 
     #[test]
@@ -438,11 +1222,9 @@ mod tests {
             fs::write(root.join(name), "sensitivecanary").unwrap();
         }
         fs::write(root.join("sub/keep.rs"), "publiccanary").unwrap();
-
         let mut index = Index::build(&root).unwrap();
         assert!(index.search("sensitivecanary", 20).is_empty());
         assert_eq!(index.search("publiccanary", 5).len(), 1);
-
         for name in sensitive {
             index.update_file(&root, Path::new(name)).unwrap();
         }
@@ -457,7 +1239,6 @@ mod tests {
         let mut index = Index::build(&root).unwrap();
         index.add_file(PathBuf::from("credentials.json"), "legacycanary".to_owned());
         assert_eq!(index.search("legacycanary", 5).len(), 1);
-
         fs::write(root.join("credentials.json"), "legacycanary").unwrap();
         index
             .update_file(&root, Path::new("credentials.json"))
