@@ -207,6 +207,16 @@ impl Index {
             self.refresh_commits(root);
             return Ok(());
         };
+        // A dirty snapshot may contain edits that are absent from the next
+        // commit diff (for example, the worktree was restored). Reconcile the
+        // actual worktree before comparing clean revisions so stale terms are
+        // removed and the clean SHA is recorded.
+        if old_revision.ends_with("-dirty") {
+            self.sync_worktree(root)?;
+            self.refresh_commits(root);
+            self.revision = Some(new_revision.to_owned());
+            return Ok(());
+        }
         let old_revision = old_revision.trim_end_matches("-dirty");
         let output = Command::new("git")
             .args([
