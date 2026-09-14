@@ -212,6 +212,48 @@ fn git_sync_handles_git_quoted_paths() {
     assert_ne!(old, new);
 }
 
+#[test]
+fn git_sync_reconciles_dirty_snapshot_back_to_clean_revision() {
+    let root = temp_dir("dirty-clean");
+    let file = root.join("src.rs");
+    fs::write(&file, "stablecommittedmarker\n").expect("write source");
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(["-C", root.to_str().expect("utf8 temp path")])
+            .args(args)
+            .output()
+            .expect("run git")
+    };
+    assert!(git(&["init", "-q"]).status.success());
+    assert!(git(&["config", "user.email", "test@example.invalid"])
+        .status
+        .success());
+    assert!(
+        git(&["config", "user.name", "Repository Intelligence Tests"])
+            .status
+            .success()
+    );
+    assert!(git(&["add", "src.rs"]).status.success());
+    assert!(git(&["commit", "-qm", "initial"]).status.success());
+    let clean = String::from_utf8(git(&["rev-parse", "HEAD"]).stdout)
+        .expect("utf8 revision")
+        .trim()
+        .to_owned();
+    let mut index = Index::build(&root).expect("build index");
+    fs::write(&file, "ephemeraldirtymarker\n").expect("write dirty source");
+    let dirty = format!("{clean}-dirty");
+    index.sync_git(&root, &dirty).expect("sync dirty snapshot");
+    assert_eq!(index.revision(), Some(dirty.as_str()));
+    assert_eq!(index.search("ephemeraldirtymarker", 5).len(), 1);
+    assert!(git(&["restore", "--", "src.rs"]).status.success());
+    index
+        .sync_git(&root, &clean)
+        .expect("sync restored clean worktree");
+    assert!(index.search("ephemeraldirtymarker", 5).is_empty());
+    assert_eq!(index.search("stablecommittedmarker", 5).len(), 1);
+    assert_eq!(index.revision(), Some(clean.as_str()));
+}
+
 #[cfg(unix)]
 #[test]
 fn answer_command_rejects_wrong_line_and_range_citations() {
@@ -254,8 +296,8 @@ fn answer_command_rejects_wrong_line_and_range_citations() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).expect("utf8 answer output");
     assert_eq!(
-        stdout.matches("[Unverified citation removed]").count(),
-        4,
-        "every out-of-span line/range citation, including extensionless paths, must be removed"
+        stdout.lines().last(),
+        Some("Insufficient repository evidence to answer this question.")
     );
+    assert!(!stdout.contains("[Unverified citation removed]"));
 }
