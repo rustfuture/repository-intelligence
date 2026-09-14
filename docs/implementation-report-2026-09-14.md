@@ -38,7 +38,7 @@ Passed on the local checkout:
 cargo fmt --check
 cargo check --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
-cargo test --locked                 15 tests passed (10 unit + 5 integration)
+cargo test --locked                 16 tests passed (10 unit + 6 integration)
 python3 evaluation/evaluate.py      Recall@5 1.00, MRR 1.0000
 python3 evaluation/evaluate_modes.py
 ```
