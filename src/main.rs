@@ -151,15 +151,11 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
         }
         verified_text.push('\n');
     }
-    if verified_citations == 0
-        && !answer
-            .text
-            .to_ascii_lowercase()
-            .contains("insufficient repository evidence")
-    {
-        verified_text.push_str("Insufficient repository evidence to answer this question.\n");
-    }
-    answer.text = verified_text.trim().to_owned();
+    answer.text = if verified_citations == 0 {
+        "Insufficient repository evidence to answer this question.".to_owned()
+    } else {
+        verified_text.trim().to_owned()
+    };
     println!(
         "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
         index.revision().unwrap_or("unknown"),
