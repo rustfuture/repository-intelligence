@@ -1,91 +1,132 @@
 # Repository Intelligence
 
-This repository begins the Repository Intelligence project with a deterministic lexical-search baseline. It indexes text files, preserves line references, skips configured build and dependency directories, and supports explicit file update/removal operations.
+Repository Intelligence is a local Rust service that turns a Git repository into citable evidence: it scans source and documentation, creates code-aware chunks, supports lexical and vector retrieval, fuses both rankings, and supplies grounded context to an optional LLM answer provider.
+
+It is deliberately a small, inspectable system rather than a collection of opaque AI calls.
+
+## Why it exists
+
+Repository questions are easy to answer incorrectly when a model guesses from a partial checkout. This project keeps the retrieval path deterministic and observable. Every source-search result carries a repository-relative path and line span, and an answer is refused when the repository has no lexical anchor for the question.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A[Git repository] --> B[Safe scanner]
+    B --> C[Code-aware chunker]
+    C --> D[In-memory index\noptional RI_INDEX_V1 snapshot]
+    D --> E[Lexical inverted index]
+    D --> F[Vector index\nHashEmbedding baseline]
+    E --> G[Hybrid ranker\nRRF k=60]
+    F --> G
+    G --> H[Evidence builder\npath:line span]
+    H --> I[Optional AGY/Ollama answer]
+```
+
+The library keeps the embedding provider behind the `EmbeddingProvider` trait. The checked-in provider (`HashEmbedding`) is a deterministic offline vector baseline; it has no model download, network call, or vendor lock-in. A learned local or hosted provider can be supplied through the same trait without changing indexing or ranking code.
 
 ## Quick start
 
 ```bash
 cargo test --locked
 cargo run --locked -- . "bounded worker"
-cargo run --locked -- --serve 127.0.0.1:8080 .
-./scripts/validate.sh
+cargo run --locked -- --semantic . "incremental indexing"
+cargo run --locked -- --hybrid . "what does reload do"
+cargo run --locked -- --commits . "authentication"
+cargo run --locked -- --analytics .
+```
+
+The default command is the compatibility lexical baseline and prints `path:line<TAB>source`. Semantic and hybrid commands print `path:line[-end]<TAB>score<TAB>source`.
+
+Create a reusable on-disk index when a repository is large or queried repeatedly:
+
+```bash
+cargo run --locked -- --index /path/to/repository /tmp/repository-intelligence.index
+cargo run --locked -- --load-index /tmp/repository-intelligence.index "incremental indexing"
+```
+
+The format stores source text, a revision marker, and recent commit metadata, uses hex-encoded fields, and recomputes vectors through the configured provider on load. It stores repository-relative paths and adds no credentials or absolute-path metadata; source files should still be treated as potentially sensitive.
+
+## Grounded answers
+
+With the authenticated `agy` CLI:
+
+```bash
 cargo run --locked -- --answer . "What does the reload endpoint do?"
 ```
 
-### CLI Output Modes
+The command builds hybrid evidence, sends only that evidence to the provider, records model/duration metadata, and screens returned `path:line` citations against the retrieved spans. If no lexical evidence exists it prints:
 
-1. **Deterministic Lexical Search (Default)**:
-   ```bash
-   cargo run --locked -- <repo_path> "<query>"
-   ```
-   Outputs matching lines in the format: `<path>:<line_number> <source_line_text>`. This is a retrieval baseline, not an LLM answer and not a security boundary. Repository content is treated as untrusted data; no instructions found in source files are executed.
+```text
+Insufficient repository evidence to answer this question.
+```
 
-2. **Grounded LLM Answer Generation (`--answer`)**:
-   ```bash
-   cargo run --locked -- --answer <repo_path> "<question>"
-   ```
-   Retrieves top lexical hits, includes the matching source lines as context in a prompt, and calls the external `agy` CLI to generate a natural language explanation. The AGY CLI is an external prerequisite; no credentials or keys are stored in this repository.
+`USE_OLLAMA=1 OLLAMA_MODEL=llama3` selects the local Ollama provider. Providers receive repository content as untrusted data; source-file instructions are never treated as system instructions.
 
-The local HTTP server exposes `GET /health`, `GET /reload`, and `GET /search?q=term+term`. Reload applies the Git diff from the indexed commit to the current HEAD and returns the new commit. Search returns the indexed Git commit plus path, line, score, and source text. It is a local development API; authentication, TLS, rate limiting, and multi-tenant isolation are not implemented.
+## Local HTTP API
 
-## Implemented capabilities
+```bash
+cargo run --locked -- --serve 127.0.0.1:8080 .
+curl http://127.0.0.1:8080/health
+curl 'http://127.0.0.1:8080/search?q=incremental+indexing'
+curl 'http://127.0.0.1:8080/commits?q=authentication'
+curl http://127.0.0.1:8080/reload
+```
 
-- Line-cited lexical retrieval with source snippet extraction (`path:line text`)
-- Configured directory and extension filtering: skips known build directories (`.git/`, `target/`, `node_modules/`) and non-text file extensions
-- Incremental file update and removal tracking
-- Git-aware commit diff synchronization (`Index::sync_git`, `GET /reload`)
-- Grounded model query generation (`--answer`) via external AGY CLI
+`/search` returns hybrid evidence with `path`, `start_line`, `end_line`, `score`, `source`, `kind`, and text, plus the indexed commit. `/commits` searches the last 100 commit subjects and dates, enabling lightweight commit-aware questions. `/reload` applies Git added/modified/deleted/renamed paths; a dirty worktree is refreshed by file hash. This is a local development API: authentication, TLS, rate limiting, and multi-tenant isolation are not implemented.
 
-## Retrieval Evaluation & Offline Research
+## Incremental indexing and safety
 
-The authored evaluation benchmark is located in `evaluation/questions.json`, with its fixed corpus in `evaluation/corpus/`.
+- Full scans skip Git/build/dependency directories, binary extensions, symlinks, and common credential/key names.
+- Each file has a stable content hash. `sync_worktree` hashes eligible files, re-indexes only changed/new files, and removes deleted files.
+- `sync_git` understands add, modify, delete, copy, type-change, and rename statuses; it falls back to a worktree refresh when Git history is unavailable.
+- The last 100 commit IDs, dates, and subjects are retained as metadata and can be searched independently; this is not a full historical blob index.
+- Chunks preserve file, function/struct/class/trait/impl declarations when a lightweight parser can identify them; 40-line generic chunks are the fallback.
+- Absolute paths, parent traversal, symlink components, and sensitive file names are rejected for incremental updates.
 
-- **Deterministic Lexical Baseline**:
-  ```bash
-  python3 evaluation/evaluate.py
-  ```
-  Reproduces the lexical retrieval baseline (`Recall@5 = 1.00`, `MRR = 1.0000`, 20 questions). This small authored corpus serves as a determinism, citation, and plumbing test, not proof of general retrieval quality or LLM answer accuracy.
+Sensitive-name matching is ASCII case-insensitive (for example `CREDENTIALS.JSON` cannot bypass the policy). These checks reduce accidental leakage; they are not a substitute for a secret scanner or an adversarial filesystem boundary.
 
-- **Offline Embedding & Hybrid Retrieval Experiment**:
-  ```bash
-  python3 evaluation/evaluate_hybrid.py
-  ```
-  Requires a local Ollama instance serving `nomic-embed-text`. Historically measured on this corpus:
-  - Lexical MRR: `1.0000` (Recall@5 = 1.00)
-  - Embedding MRR: `0.9167` (Recall@5 = 1.00)
-  - Hybrid RRF MRR: `0.8667` (Recall@5 = 1.00)
-  
-  Hybrid retrieval did not improve ranking on this small corpus and resulted in degraded MRR. It is retained strictly as an offline Python evaluation experiment and is **not** promoted as a product gain.
+## Evaluation
 
-## Deliberate boundaries & non-claims
+The fixed authored corpus in `evaluation/corpus/` and questions in `evaluation/questions.json` are a regression suite, not a general quality claim.
 
-- **No In-Binary Hybrid or Vector Search**: Vector embeddings and hybrid search algorithms exist only in the offline Python script `evaluation/evaluate_hybrid.py`. They are **not** integrated into the Rust product binary, library, or HTTP API.
-- **Heuristic Citation Screening, Not Answer Verification**: The CLI screens some plain `path:line` tokens against retrieved text. This is not a complete citation parser and does not prove that an answer is supported by its sources. The lexical evaluator reports retrieval Recall@5 and MRR only, not answer or citation accuracy.
-- **File Access Policy**: Initial scans and incremental updates exclude hidden path components, common build/dependency directories, `.pem`/`.key` files, and named SSH private keys. Incremental updates reject absolute/parent paths and symlink components. Sensitive-name matching is ASCII case-insensitive, so an alias like `CREDENTIALS.JSON` cannot bypass the policy on a case-insensitive filesystem. This name-based policy is not a secret scanner and does not defend against a hostile concurrent filesystem mutation.
-- **Working-Tree Prototype**: Files are read from the working tree, not an immutable Git snapshot. A `-dirty` label is diagnostic, not a reproducible snapshot identifier. Commit-consistent indexing and complete rename handling remain unfinished.
-- **No Background Watcher**: Background filesystem events are not monitored; synchronization is triggered explicitly via CLI or HTTP `/reload`.
-- **No Production Hardening**: Authentication, TLS, rate limiting, and multi-tenant isolation remain out of scope for this local development prototype.
+```bash
+python3 evaluation/evaluate.py
+python3 evaluation/evaluate_modes.py
+```
 
-## Backlog (explicitly not completed)
+The separate `evaluation/evaluate_hybrid.py` experiment compares local Ollama `nomic-embed-text` embeddings with the product modes. It requires a running Ollama service and is intentionally not part of CI.
 
-- **Immutable commit indexing**: index a pinned Git tree or commit blob instead of the working tree.
-- **Complete rename/add/delete consistency**: `Index::sync_git` currently parses `D` and treats other
-  statuses as updates; Git rename (`R`) status is not handled.
-- **Structured citation**: return machine-checkable citations rather than screening plain `path:line`
-  tokens.
-- **Answerability evaluation**: measure whether an answer is supported by its sources, beyond retrieval
-  Recall@5 and MRR.
+The current run on 20 file-level questions produced:
 
-## File policy change (2026-09-10)
+| mode | Hit/Recall@5 | MRR |
+| --- | ---: | ---: |
+| lexical | 1.00 | 1.0000 |
+| semantic (`hash-token-v1`) | 1.00 | 0.9375 |
+| hybrid (RRF, `k=60`) | 1.00 | 1.0000 |
 
-`walk` and `update_file` now share a single sensitive-file policy
-(`is_sensitive_file_name`), so a full scan and an incremental update agree. Previously
-`credentials.json`, `service-account.json`, and `.p12`/`.pfx`/`.keystore` were excluded during the
-initial scan but could be indexed on an incremental update. Regression tests cover the nested and
-top-level cases, a previously indexed excluded file, and the full-vs-incremental agreement.
+The corpus is authored to test plumbing and determinism. It does not establish retrieval quality on arbitrary repositories, and the hashed vector baseline is not a trained language embedding model.
+
+## Tests and development checks
+
+```bash
+cargo fmt --check
+cargo check --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+./scripts/validate.sh
+```
+
+The Rust suite covers line retrieval, code-aware evidence, semantic/hybrid ranking, persistence round trips, Git synchronization, file removal, unanswerable questions, and sensitive-file policy consistency. Optional AGY and prompt-injection smoke tests are kept separate from normal CI because they require an external model CLI.
+
+## Current limitations and roadmap
+
+- `HashEmbedding` is an offline vector baseline. A learned embedding provider and a benchmark on a larger, independently held-out corpus are the next retrieval milestone.
+- The lightweight declaration parser is intentionally conservative; language-specific AST chunkers are not yet bundled.
+- Commit metadata search is limited to the last 100 commit IDs, dates, and subjects; historical file-level blame and full commit-blob retrieval are not included.
+- The HTTP server is single-threaded and local-only.
+- LLM answer quality and citation support require a provider-specific evaluation; retrieval metrics alone do not prove grounded generation.
 
 ## License
 
-MIT. The evaluation corpus in this repository is authored specifically for this project.
-
-Architecture and limitations are documented in `docs/architecture.md`; the current baseline is summarized in `RELEASE_NOTES.md`. Run `python3 scripts/benchmark.py` for the local fixed-corpus latency measurement.
+MIT. The evaluation corpus is authored for this project and contains no private repository content.
