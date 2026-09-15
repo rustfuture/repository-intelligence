@@ -1,7 +1,7 @@
 use repository_intelligence::{
     current_git_revision, format_evidence,
     llm::{AgyProvider, OllamaProvider, Provider},
-    Evidence, Index, RetrievalMode,
+    Index, RetrievalMode,
 };
 use std::{
     env,
@@ -17,6 +17,10 @@ fn main() {
         if pos + 1 < raw_args.len() {
             let provider = raw_args.remove(pos + 1);
             raw_args.remove(pos);
+            if let Err(err) = repository_intelligence::provider_from_name(&provider) {
+                eprintln!("error: {}", err);
+                std::process::exit(2);
+            }
             env::set_var("RI_EMBEDDING_PROVIDER", provider);
         }
     }
@@ -133,38 +137,19 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
         .answer(&question, &evidence)
         .expect("run LLM provider");
 
-    let mut verified_text = String::new();
-    let mut verified_citations = 0;
-    for line in answer.text.lines() {
-        let mut valid = true;
-        for word in line.split_whitespace() {
-            let cleaned = word.trim_matches(|c: char| {
-                !c.is_alphanumeric() && c != '.' && c != ':' && c != '/' && c != '_' && c != '-'
-            });
-            if let Some((path, range)) = parse_citation(cleaned) {
-                if !evidence_items
-                    .iter()
-                    .any(|item| citation_is_supported(item, &path, range.0, range.1))
-                {
-                    valid = false;
-                    break;
-                }
-                verified_citations += 1;
-            }
+    let verification =
+        repository_intelligence::citation::verify_answer_citations(&answer.text, &evidence_items);
+    match verification {
+        repository_intelligence::citation::VerificationResult::Accepted {
+            verified_text,
+            verified_citations: _,
+        } => {
+            answer.text = verified_text;
         }
-        if valid {
-            verified_text.push_str(line);
-        } else {
-            verified_text.push_str("[Unverified citation removed]");
+        repository_intelligence::citation::VerificationResult::Refused { reason: _ } => {
+            answer.text = "Insufficient repository evidence to answer this question.".to_owned();
         }
-        verified_text.push('\n');
     }
-    answer.text =
-        if verified_citations == 0 || verified_text.contains("Insufficient repository evidence") {
-            "Insufficient repository evidence to answer this question.".to_owned()
-        } else {
-            verified_text.trim().to_owned()
-        };
     println!(
         "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
         index.revision().unwrap_or("unknown"),
@@ -176,24 +161,6 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
             .unwrap_or_else(|| "unknown".to_owned()),
         answer.text
     );
-}
-
-fn parse_citation(value: &str) -> Option<(String, (usize, usize))> {
-    let (path, range) = value.rsplit_once(':')?;
-    let path = path.trim_start_matches("./");
-    if path.is_empty() {
-        return None;
-    }
-    let mut numbers = range.split('-');
-    let start = numbers.next()?.parse::<usize>().ok()?;
-    let end = numbers.next().unwrap_or(range).parse::<usize>().ok()?;
-    (start > 0 && end >= start).then_some((path.to_owned(), (start, end)))
-}
-
-fn citation_is_supported(item: &Evidence, path: &str, start: usize, end: usize) -> bool {
-    let item_path = item.path.to_string_lossy();
-    let clean_item = item_path.trim_start_matches("./");
-    clean_item == path && start >= item.start_line && end <= item.end_line
 }
 
 fn serve(address: &str, root: &Path) {

@@ -1,3 +1,4 @@
+pub mod citation;
 pub mod llm;
 
 use std::{
@@ -80,12 +81,11 @@ struct Chunk {
     symbol: Option<String>,
 }
 
-/// Provider abstraction for semantic retrieval. The default provider is
-/// deterministic and dependency-free, so indexing and tests work offline.
+/// Provider abstraction for semantic retrieval.
 pub trait EmbeddingProvider: Send + Sync {
     fn name(&self) -> &str;
     fn dimension(&self) -> usize;
-    fn embed(&self, text: &str) -> Vec<f32>;
+    fn embed(&self, text: &str) -> io::Result<Vec<f32>>;
 }
 
 /// A stable hashed-token embedding. It is not a language model, but gives the
@@ -119,7 +119,7 @@ impl EmbeddingProvider for HashEmbedding {
         self.dimension
     }
 
-    fn embed(&self, text: &str) -> Vec<f32> {
+    fn embed(&self, text: &str) -> io::Result<Vec<f32>> {
         let mut vector = vec![0.0; self.dimension];
         for token in tokenize(text) {
             let hash = stable_hash(token.as_bytes());
@@ -128,7 +128,7 @@ impl EmbeddingProvider for HashEmbedding {
             vector[slot] += sign;
         }
         normalize(&mut vector);
-        vector
+        Ok(vector)
     }
 }
 
@@ -159,7 +159,7 @@ impl OllamaEmbedding {
     }
 
     pub fn try_embed(&self, text: &str) -> io::Result<Vec<f32>> {
-        http_post_embed(&self.endpoint, &self.model, text)
+        http_post_embed(&self.endpoint, &self.model, text, self.dimension)
     }
 
     pub fn is_available(&self) -> bool {
@@ -182,25 +182,33 @@ impl EmbeddingProvider for OllamaEmbedding {
         self.dimension
     }
 
-    fn embed(&self, text: &str) -> Vec<f32> {
-        match self.try_embed(text) {
-            Ok(vec) => vec,
-            Err(err) => panic!(
-                "Ollama embedding request failed for model '{}' at '{}': {}. Ensure Ollama is running or use HashEmbedding.",
-                self.model, self.endpoint, err
-            ),
-        }
+    fn embed(&self, text: &str) -> io::Result<Vec<f32>> {
+        self.try_embed(text)
     }
 }
 
-pub fn default_provider_from_env() -> Arc<dyn EmbeddingProvider> {
-    if let Ok(provider) = std::env::var("RI_EMBEDDING_PROVIDER") {
-        let lower = provider.to_ascii_lowercase();
-        if lower.contains("nomic") || lower.contains("ollama") {
-            return Arc::new(OllamaEmbedding::default());
-        }
+pub fn provider_from_name(name: &str) -> io::Result<Arc<dyn EmbeddingProvider>> {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower == "hash" || lower == "hash-token-v1" {
+        Ok(Arc::new(HashEmbedding::default()))
+    } else if lower.starts_with("nomic") || lower.starts_with("ollama") {
+        Ok(Arc::new(OllamaEmbedding::default()))
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "unknown embedding provider '{}'; supported: 'hash', 'nomic-embed-text'",
+                name
+            ),
+        ))
     }
-    Arc::new(HashEmbedding::default())
+}
+
+pub fn default_provider_from_env() -> io::Result<Arc<dyn EmbeddingProvider>> {
+    if let Ok(provider) = std::env::var("RI_EMBEDDING_PROVIDER") {
+        return provider_from_name(&provider);
+    }
+    Ok(Arc::new(HashEmbedding::default()))
 }
 
 pub struct Index {
@@ -235,7 +243,15 @@ impl Index {
     }
 
     pub fn build(root: &Path) -> io::Result<Self> {
-        let mut index = Self::with_embedding(default_provider_from_env());
+        let provider = default_provider_from_env()?;
+        Self::build_with_provider(root, provider)
+    }
+
+    pub fn build_with_provider(
+        root: &Path,
+        embedding: Arc<dyn EmbeddingProvider>,
+    ) -> io::Result<Self> {
+        let mut index = Self::with_embedding(embedding);
         index.rebuild(root)?;
         index.revision = git_revision(root);
         index.refresh_commits(root);
@@ -411,7 +427,7 @@ impl Index {
         let path = root.join(relative);
         if path.is_file() && is_indexable(relative) {
             if let Some(content) = read_source(&path)? {
-                self.add_file(relative.to_path_buf(), content);
+                self.add_file(relative.to_path_buf(), content)?;
             }
         }
         Ok(())
@@ -464,7 +480,7 @@ impl Index {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut output = String::from("RI_INDEX_V1\n");
+        let mut output = String::from("RI_INDEX_V2\n");
         output.push_str("revision\t");
         output.push_str(&hex_encode(self.revision.as_deref().unwrap_or("")));
         output.push('\n');
@@ -473,6 +489,9 @@ impl Index {
         output.push('\n');
         output.push_str("dimension\t");
         output.push_str(&hex_encode(&self.embedding.dimension().to_string()));
+        output.push('\n');
+        output.push_str("normalized\t");
+        output.push_str(&hex_encode("true"));
         output.push('\n');
         let mut paths: Vec<_> = self.files.keys().collect();
         paths.sort();
@@ -501,7 +520,8 @@ impl Index {
     }
 
     pub fn load_from(path: &Path) -> io::Result<Self> {
-        Self::load_from_with_embedding(path, default_provider_from_env())
+        let provider = default_provider_from_env()?;
+        Self::load_from_with_embedding(path, provider)
     }
 
     pub fn load_from_with_embedding(
@@ -510,7 +530,8 @@ impl Index {
     ) -> io::Result<Self> {
         let content = fs::read_to_string(path)?;
         let mut lines = content.lines();
-        if lines.next() != Some("RI_INDEX_V1") {
+        let header = lines.next().unwrap_or("");
+        if header != "RI_INDEX_V2" && header != "RI_INDEX_V1" {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "unsupported repository-intelligence index format",
@@ -527,7 +548,17 @@ impl Index {
                     }
                 }
                 ["provider", encoded] => {
-                    let _provider = hex_decode(encoded)?;
+                    let saved_provider = hex_decode(encoded)?;
+                    if !saved_provider.is_empty() && saved_provider != index.embedding.name() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "embedding provider mismatch: index specifies provider '{}', but current provider is '{}'. Re-index the repository or specify the matching provider.",
+                                saved_provider,
+                                index.embedding.name()
+                            ),
+                        ));
+                    }
                 }
                 ["dimension", encoded] => {
                     let dim_str = hex_decode(encoded)?;
@@ -545,6 +576,7 @@ impl Index {
                         }
                     }
                 }
+                ["normalized", _] => {}
                 ["file", encoded_path, encoded_content] => {
                     if encoded_path.len() > 4096 {
                         return Err(io::Error::new(
@@ -563,7 +595,7 @@ impl Index {
                         && !is_sensitive_file_name(file_name)
                     {
                         index.remove_file(&relative);
-                        index.add_file(relative, source);
+                        index.add_file(relative, source)?;
                     }
                 }
                 ["commit", encoded_sha, encoded_date, encoded_subject] => {
@@ -725,7 +757,13 @@ impl Index {
     }
 
     fn semantic_evidence(&self, query: &str, limit: usize) -> Vec<Evidence> {
-        let query_vector = self.embedding.embed(query);
+        let query_vector = match self.embedding.embed(query) {
+            Ok(v) => v,
+            Err(err) => {
+                eprintln!("semantic embedding failed: {err}");
+                return Vec::new();
+            }
+        };
         let mut scored = Vec::new();
         for (path, chunks) in &self.chunks {
             let Some(vectors) = self.vectors.get(path) else {
@@ -812,14 +850,14 @@ impl Index {
                 self.walk(root, &path)?;
             } else if is_indexable(rel) && !is_sensitive_file_name(file_name) {
                 if let Some(content) = read_source(&path)? {
-                    self.add_file(rel.to_path_buf(), content);
+                    self.add_file(rel.to_path_buf(), content)?;
                 }
             }
         }
         Ok(())
     }
 
-    fn add_file(&mut self, relative: PathBuf, content: String) {
+    fn add_file(&mut self, relative: PathBuf, content: String) -> io::Result<()> {
         let hash = stable_hash(content.as_bytes());
         let lines: Vec<String> = content.lines().map(String::from).collect();
         for (number, line) in lines.iter().enumerate() {
@@ -831,14 +869,15 @@ impl Index {
             }
         }
         let chunks = chunk_file(&relative, &lines);
-        let vectors = chunks
-            .iter()
-            .map(|chunk| self.embedding.embed(&chunk.text))
-            .collect();
+        let mut vectors = Vec::with_capacity(chunks.len());
+        for chunk in &chunks {
+            vectors.push(self.embedding.embed(&chunk.text)?);
+        }
         self.file_hashes.insert(relative.clone(), hash);
         self.chunks.insert(relative.clone(), chunks);
         self.vectors.insert(relative.clone(), vectors);
         self.files.insert(relative, lines);
+        Ok(())
     }
 
     fn refresh_commits(&mut self, root: &Path) {
@@ -892,7 +931,16 @@ fn evidence_from_chunk(chunk: &Chunk, score: f32, source: &str) -> Evidence {
 pub fn format_evidence(evidence: &[Evidence]) -> String {
     evidence
         .iter()
-        .map(|item| format!("[{}] {}\n{}", item.citation(), item.kind, item.text.trim()))
+        .enumerate()
+        .map(|(idx, item)| {
+            format!(
+                "[E{}] [{}] {}\n{}",
+                idx + 1,
+                item.citation(),
+                item.kind,
+                item.text.trim()
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -1086,7 +1134,7 @@ fn is_safe_relative(path: &Path) -> bool {
 fn is_indexable(path: &Path) -> bool {
     !matches!(
         path.extension().and_then(|x| x.to_str()),
-        Some("png" | "jpg" | "jpeg" | "gif" | "lock" | "bin" | "ico" | "pdf" | "zip")
+        Some("png" | "jpg" | "jpeg" | "gif" | "lock" | "bin" | "ico" | "pdf" | "zip" | "ri")
     )
 }
 
@@ -1168,22 +1216,42 @@ fn hex_decode(value: &str) -> io::Result<String> {
 }
 
 fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
+    let mut out = String::with_capacity(value.len() + 16);
+    for c in value.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
-fn http_post_embed(endpoint: &str, model: &str, text: &str) -> io::Result<Vec<f32>> {
+fn http_post_embed(
+    endpoint: &str,
+    model: &str,
+    text: &str,
+    expected_dim: usize,
+) -> io::Result<Vec<f32>> {
     use std::io::{Read, Write};
     use std::net::{TcpStream, ToSocketAddrs};
     use std::time::Duration;
 
-    let host_port = endpoint
-        .trim_start_matches("http://")
-        .trim_start_matches("https://")
-        .trim_end_matches('/');
+    if endpoint.starts_with("https://") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "HTTPS endpoint is not supported for local plaintext Ollama HTTP connection; specify http:// or host:port",
+        ));
+    }
+
+    let host_port = endpoint.trim_start_matches("http://").trim_end_matches('/');
 
     let addr = host_port.to_socket_addrs()?.next().ok_or_else(|| {
         io::Error::new(io::ErrorKind::AddrNotAvailable, "invalid endpoint address")
@@ -1201,7 +1269,7 @@ fn http_post_embed(endpoint: &str, model: &str, text: &str) -> io::Result<Vec<f3
     );
 
     let request = format!(
-        "POST /api/embed HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        "POST /api/embed HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         host_port,
         body.len(),
         body
@@ -1210,7 +1278,9 @@ fn http_post_embed(endpoint: &str, model: &str, text: &str) -> io::Result<Vec<f3
     stream.write_all(request.as_bytes())?;
 
     let mut response = Vec::new();
-    stream.read_to_end(&mut response)?;
+    (&mut stream)
+        .take(10 * 1024 * 1024)
+        .read_to_end(&mut response)?;
 
     let response_str = String::from_utf8_lossy(&response);
     let mut header_and_body = response_str.splitn(2, "\r\n\r\n");
@@ -1218,13 +1288,18 @@ fn http_post_embed(endpoint: &str, model: &str, text: &str) -> io::Result<Vec<f3
     let body_str = header_and_body.next().unwrap_or("");
 
     let status_line = header.lines().next().unwrap_or("");
-    if !status_line.contains(" 200 ")
-        && !status_line.ends_with(" 200")
-        && !status_line.contains("200 OK")
-    {
+    let status_code = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+
+    if status_code != 200 {
         return Err(io::Error::other(format!(
-            "Ollama embed error: {}",
-            status_line
+            "Ollama HTTP error (status {}): {}\nbody: {}",
+            status_code,
+            status_line,
+            body_str.chars().take(200).collect::<String>()
         )));
     }
 
@@ -1251,23 +1326,46 @@ fn http_post_embed(endpoint: &str, model: &str, text: &str) -> io::Result<Vec<f3
             io::ErrorKind::InvalidData,
             format!(
                 "no embeddings found in Ollama response. status: '{}', body: '{}'",
-                status_line, body_str
+                status_line,
+                body_str.chars().take(200).collect::<String>()
             ),
         ));
     };
 
-    let mut vector = Vec::new();
+    let mut vector = Vec::with_capacity(expected_dim);
     for token in vector_str.split(',') {
         let trimmed = token.trim();
         if !trimmed.is_empty() {
             let val = trimmed.parse::<f32>().map_err(|e| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("failed to parse float: {}", e),
+                    format!("failed to parse embedding float '{}': {}", trimmed, e),
                 )
             })?;
+            if val.is_nan() || val.is_infinite() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "embedding vector contains NaN or infinite value",
+                ));
+            }
             vector.push(val);
         }
+    }
+
+    if vector.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "empty embedding vector received from provider",
+        ));
+    }
+    if vector.len() != expected_dim {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "embedding dimension mismatch: expected {} dimensions from model '{}', but received {}",
+                expected_dim, model, vector.len()
+            ),
+        ));
     }
 
     normalize(&mut vector);
@@ -1405,10 +1503,12 @@ mod tests {
     fn loading_an_index_reapplies_sensitive_file_policy() {
         let root = fixture();
         let mut index = Index::build(&root).unwrap();
-        index.add_file(
-            PathBuf::from("credentials.json"),
-            "should-not-leak".to_owned(),
-        );
+        index
+            .add_file(
+                PathBuf::from("credentials.json"),
+                "should-not-leak".to_owned(),
+            )
+            .unwrap();
         let path = root.join("saved.ri");
         index.save_to(&path).unwrap();
         let loaded = Index::load_from(&path).unwrap();
@@ -1449,7 +1549,9 @@ mod tests {
     fn previously_indexed_sensitive_file_is_removed_on_update() {
         let root = fixture();
         let mut index = Index::build(&root).unwrap();
-        index.add_file(PathBuf::from("credentials.json"), "legacycanary".to_owned());
+        index
+            .add_file(PathBuf::from("credentials.json"), "legacycanary".to_owned())
+            .unwrap();
         assert_eq!(index.search("legacycanary", 5).len(), 1);
         fs::write(root.join("credentials.json"), "legacycanary").unwrap();
         index
