@@ -159,12 +159,182 @@ fn parse_single_citation(inside: &str) -> Result<CitationRef, CitationError> {
     }
 }
 
-pub fn citation_matches_evidence(citation: &CitationRef, evidence: &[Evidence]) -> bool {
+const STOPWORDS: &[&str] = &[
+    "a",
+    "about",
+    "above",
+    "after",
+    "again",
+    "against",
+    "all",
+    "am",
+    "an",
+    "and",
+    "any",
+    "are",
+    "aren't",
+    "as",
+    "at",
+    "be",
+    "because",
+    "been",
+    "before",
+    "being",
+    "below",
+    "between",
+    "both",
+    "but",
+    "by",
+    "can",
+    "cannot",
+    "could",
+    "couldn't",
+    "did",
+    "didn't",
+    "do",
+    "does",
+    "doesn't",
+    "doing",
+    "don't",
+    "down",
+    "during",
+    "each",
+    "few",
+    "for",
+    "from",
+    "further",
+    "had",
+    "hadn't",
+    "has",
+    "hasn't",
+    "have",
+    "haven't",
+    "having",
+    "he",
+    "her",
+    "here",
+    "hers",
+    "herself",
+    "him",
+    "himself",
+    "his",
+    "how",
+    "i",
+    "if",
+    "in",
+    "into",
+    "is",
+    "isn't",
+    "it",
+    "it's",
+    "its",
+    "itself",
+    "let's",
+    "me",
+    "more",
+    "most",
+    "mustn't",
+    "my",
+    "myself",
+    "no",
+    "nor",
+    "not",
+    "of",
+    "off",
+    "on",
+    "once",
+    "only",
+    "or",
+    "other",
+    "ought",
+    "our",
+    "ours",
+    "ourselves",
+    "out",
+    "over",
+    "own",
+    "same",
+    "shan't",
+    "she",
+    "should",
+    "shouldn't",
+    "so",
+    "some",
+    "such",
+    "than",
+    "that",
+    "the",
+    "their",
+    "theirs",
+    "them",
+    "themselves",
+    "then",
+    "there",
+    "these",
+    "they",
+    "this",
+    "those",
+    "through",
+    "to",
+    "too",
+    "under",
+    "until",
+    "up",
+    "very",
+    "was",
+    "wasn't",
+    "we",
+    "were",
+    "weren't",
+    "what",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whom",
+    "why",
+    "with",
+    "won't",
+    "would",
+    "wouldn't",
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "yourselves",
+    // LLM conversational filler words
+    "according",
+    "code",
+    "snippet",
+    "statement",
+    "evidence",
+    "file",
+    "function",
+    "shows",
+    "states",
+    "indicates",
+    "returns",
+    "defined",
+    "contains",
+    "value",
+];
+
+pub fn resolve_citation<'a>(
+    citation: &CitationRef,
+    evidence: &'a [Evidence],
+) -> Option<&'a Evidence> {
     match citation {
-        CitationRef::EvidenceId(id) => *id >= 1 && *id <= evidence.len(),
+        CitationRef::EvidenceId(id) => {
+            if *id >= 1 && *id <= evidence.len() {
+                Some(&evidence[*id - 1])
+            } else {
+                None
+            }
+        }
         CitationRef::Span { path, start, end } => {
             let norm_path = Path::new(path.trim_start_matches("./"));
-            evidence.iter().any(|item| {
+            evidence.iter().find(|item| {
                 let item_norm =
                     Path::new(item.path.to_str().unwrap_or("").trim_start_matches("./"));
                 item_norm == norm_path
@@ -173,6 +343,82 @@ pub fn citation_matches_evidence(citation: &CitationRef, evidence: &[Evidence]) 
                     && *start <= *end
             })
         }
+    }
+}
+
+pub fn citation_matches_evidence(citation: &CitationRef, evidence: &[Evidence]) -> bool {
+    resolve_citation(citation, evidence).is_some()
+}
+
+pub fn extract_claim_text(line: &str) -> String {
+    let mut result = String::with_capacity(line.len());
+    let mut in_bracket = false;
+    for c in line.chars() {
+        if c == '[' {
+            in_bracket = true;
+        } else if c == ']' {
+            in_bracket = false;
+        } else if !in_bracket {
+            result.push(c);
+        }
+    }
+    result.trim().to_string()
+}
+
+pub fn tokenize_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(|t| t.trim_matches('_').to_ascii_lowercase())
+        .filter(|t| t.len() >= 2)
+        .collect()
+}
+
+pub fn evidence_supports_claim(claim: &str, evidence_item: &Evidence) -> bool {
+    let claim_tokens = tokenize_words(claim);
+    let informative_tokens: Vec<&str> = claim_tokens
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|t| !STOPWORDS.contains(t) && t.len() >= 2)
+        .collect();
+
+    // If claim has no informative content words, it cannot be safely grounded
+    if informative_tokens.is_empty() {
+        return false;
+    }
+
+    let mut evidence_text = evidence_item.text.clone();
+    evidence_text.push(' ');
+    evidence_text.push_str(&evidence_item.kind);
+    if let Some(ref sym) = evidence_item.symbol {
+        evidence_text.push(' ');
+        evidence_text.push_str(sym);
+    }
+    if let Some(p) = evidence_item.path.to_str() {
+        evidence_text.push(' ');
+        evidence_text.push_str(p);
+    }
+
+    let evidence_tokens = tokenize_words(&evidence_text);
+
+    let mut matched_count = 0;
+    for &claim_tok in &informative_tokens {
+        let is_matched = evidence_tokens.iter().any(|ev_tok| {
+            ev_tok == claim_tok
+                || (claim_tok.len() >= 3 && ev_tok.contains(claim_tok))
+                || (ev_tok.len() >= 3 && claim_tok.contains(ev_tok.as_str()))
+        });
+        if is_matched {
+            matched_count += 1;
+        }
+    }
+
+    if matched_count == 0 {
+        return false;
+    }
+
+    if informative_tokens.len() <= 2 {
+        matched_count >= 1
+    } else {
+        matched_count >= 2 || (matched_count as f32 / informative_tokens.len() as f32) >= 0.20
     }
 }
 
@@ -211,18 +457,33 @@ pub fn verify_answer_citations(raw_answer: &str, evidence: &[Evidence]) -> Verif
             };
         }
 
+        let claim_text = extract_claim_text(line_trimmed);
+
         let mut line_citations_count = 0;
         for c_res in citations {
             match c_res {
                 Ok(c) => {
-                    if !citation_matches_evidence(&c, evidence) {
+                    let resolved = match resolve_citation(&c, evidence) {
+                        Some(item) => item,
+                        None => {
+                            return VerificationResult::Refused {
+                                reason: format!(
+                                    "Citation '{:?}' is not found in retrieved evidence",
+                                    c
+                                ),
+                            };
+                        }
+                    };
+
+                    if !evidence_supports_claim(&claim_text, resolved) {
                         return VerificationResult::Refused {
                             reason: format!(
-                                "Citation '{:?}' is not supported by retrieved evidence",
-                                c
+                                "Cited evidence [{}] does not support claim: '{claim_text}'",
+                                resolved.citation()
                             ),
                         };
                     }
+
                     line_citations_count += 1;
                 }
                 Err(err) => {
@@ -376,5 +637,18 @@ mod tests {
         let ans = "Insufficient repository evidence to answer this question.";
         let res = verify_answer_citations(ans, &ev);
         assert!(matches!(res, VerificationResult::Refused { .. }));
+    }
+
+    #[test]
+    fn verify_answer_refuses_irrelevant_citation_for_claim() {
+        let ev = sample_evidence();
+        // security.rs:2-4 contains validate_relative_path, completely irrelevant to reload git diff
+        let ans = "The reload endpoint applies a Git diff for added, modified, and deleted paths [security.rs:2-4].";
+        let res = verify_answer_citations(ans, &ev);
+        assert!(
+            matches!(res, VerificationResult::Refused { .. }),
+            "Expected Refused for irrelevant citation, got: {:?}",
+            res
+        );
     }
 }

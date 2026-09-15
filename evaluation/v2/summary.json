@@ -1,6 +1,6 @@
 {
   "evaluation_version": "v2",
-  "timestamp": "2026-09-15T22:27:37Z",
+  "timestamp": "2026-09-15T22:44:06Z",
   "corpus_manifest": {
     "README.md": "2984d9c83f0897acc822e99c6c2acf900a1490477d89e4ef46136d38921e546c",
     "api.rs": "e78fcfb30f10e3dd82f1856980e4aa41341776ff1444124fbb78b55bc6b5ee1b",
@@ -27,7 +27,7 @@
       "span_mrr": 0.7531,
       "heldout_span_mrr": 0.7594,
       "total_traps": 14,
-      "latency_p50_ms": 66,
+      "latency_p50_ms": 68,
       "latency_p95_ms": 73
     },
     "hash_baseline": {
@@ -42,8 +42,8 @@
       "span_mrr": 0.6303,
       "heldout_span_mrr": 0.6361,
       "total_traps": 14,
-      "latency_p50_ms": 66,
-      "latency_p95_ms": 71
+      "latency_p50_ms": 67,
+      "latency_p95_ms": 70
     },
     "neural_nomic": {
       "answerable_questions": 38,
@@ -57,8 +57,8 @@
       "span_mrr": 0.9496,
       "heldout_span_mrr": 0.9361,
       "total_traps": 14,
-      "latency_p50_ms": 405,
-      "latency_p95_ms": 487
+      "latency_p50_ms": 412,
+      "latency_p95_ms": 485
     },
     "hybrid_nomic": {
       "answerable_questions": 38,
@@ -72,8 +72,8 @@
       "span_mrr": 0.8816,
       "heldout_span_mrr": 0.8667,
       "total_traps": 14,
-      "latency_p50_ms": 418,
-      "latency_p95_ms": 467
+      "latency_p50_ms": 429,
+      "latency_p95_ms": 493
     }
   },
   "llm_evaluation": {
@@ -81,7 +81,7 @@
     "sample_answerable": 6,
     "sample_traps": 4,
     "claim_supported": 4,
-    "exact_refusals": 3,
-    "hallucinated_or_false_answers": 1
+    "exact_refusals": 4,
+    "hallucinated_or_false_answers": 0
   }
 }

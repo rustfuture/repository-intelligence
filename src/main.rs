@@ -146,7 +146,10 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
         } => {
             answer.text = verified_text;
         }
-        repository_intelligence::citation::VerificationResult::Refused { reason: _ } => {
+        repository_intelligence::citation::VerificationResult::Refused { reason } => {
+            if env::var("RI_DEBUG_CITATION").is_ok() {
+                eprintln!("debug verification refused: {reason}");
+            }
             answer.text = "Insufficient repository evidence to answer this question.".to_owned();
         }
     }

@@ -650,3 +650,18 @@ fn ollama_embedding_rejects_https_endpoint() {
         err
     );
 }
+
+#[test]
+fn answer_command_rejects_irrelevant_citation_even_if_span_exists() {
+    // Span src/lib.rs:10-12 exists in the test fixture (pub fn needle() { true; }),
+    // but the model hallucinates a reload git diff claim that is unsupported by the chunk.
+    let script = "#!/bin/sh\nprintf '%s\\n' 'The reload endpoint applies a Git diff for added, modified, and deleted paths [src/lib.rs:10-12].'\n";
+    let (success, stdout) = run_answer_with_fake_ollama(script);
+    assert!(success);
+    assert_eq!(
+        stdout.lines().last(),
+        Some("Insufficient repository evidence to answer this question."),
+        "Irrelevant citation must be refused even if span exists in evidence: {}",
+        stdout
+    );
+}
