@@ -372,54 +372,347 @@ pub fn tokenize_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn evidence_supports_claim(claim: &str, evidence_item: &Evidence) -> bool {
-    let claim_tokens = tokenize_words(claim);
-    let informative_tokens: Vec<&str> = claim_tokens
-        .iter()
-        .map(|s| s.as_str())
-        .filter(|t| !STOPWORDS.contains(t) && t.len() >= 2)
-        .collect();
+/// Verdict for a single atomic claim against one evidence span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SupportOutcome {
+    Supported,
+    Unsupported(String),
+}
 
-    // If claim has no informative content words, it cannot be safely grounded
-    if informative_tokens.is_empty() {
+/// Per-line verification record that keeps *citation resolution* (does the cited
+/// span exist in the retrieved evidence?) separate from *claim support* (does
+/// the cited span actually entail the claim?).
+///
+/// Citation presence alone is **not** correctness evidence. A claim may resolve
+/// to a real retrieved span and still be unsupported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClaimAssessment {
+    pub claim: String,
+    pub citations: Vec<String>,
+    pub citation_resolved: bool,
+    pub supported: bool,
+    pub reason: String,
+}
+
+/// Structured verification result for a whole answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerAssessment {
+    pub accepted: bool,
+    pub verified_text: String,
+    pub declared_citations: usize,
+    pub resolved_citations: usize,
+    pub verified_citations: usize,
+    pub claims: Vec<ClaimAssessment>,
+    pub reason: String,
+}
+
+/// Explicit negation words. Intentionally narrow: words such as "rejects" or
+/// "invalid" are not treated as polarity markers because they carry their own
+/// meaning and over-triggering them caused false rejects.
+const NEGATION_CUES: &[&str] = &[
+    "not", "no", "never", "without", "cannot", "cant", "dont", "doesnt", "isnt", "arent", "wont",
+    "shouldnt", "nor", "neither",
+];
+
+fn is_negation_cue(token: &str) -> bool {
+    NEGATION_CUES.contains(&token)
+}
+
+/// Tokenize while turning code negation `!` into an explicit `not` token so that
+/// `!is_symlink` reads as a negated predicate.
+fn tokenize_with_negation(text: &str) -> Vec<String> {
+    tokenize_words(&text.replace('!', " not "))
+}
+
+/// True when the two tokens are the same word or a conservative morphological
+/// variant: a shared prefix of at least four characters covering at least half
+/// of the shorter token. This deliberately does **not** relate `safe` to
+/// `unsafe`, so a claim cannot borrow support from a negated form.
+fn tokens_related(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let shortest = left.len().min(right.len());
+    if shortest < 4 {
         return false;
+    }
+    let shared = left
+        .bytes()
+        .zip(right.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    shared >= 4 && shared * 2 >= shortest
+}
+
+fn normalize_number(raw: &str) -> String {
+    let raw = raw.trim_end_matches('.');
+    match raw.split_once('.') {
+        Some((int_part, frac)) => {
+            let int_trimmed = int_part.trim_start_matches('0');
+            let int_out = if int_trimmed.is_empty() {
+                "0"
+            } else {
+                int_trimmed
+            };
+            let frac_trimmed = frac.trim_end_matches('0');
+            if frac_trimmed.is_empty() {
+                int_out.to_string()
+            } else {
+                format!("{int_out}.{frac_trimmed}")
+            }
+        }
+        None => {
+            let trimmed = raw.trim_start_matches('0');
+            if trimmed.is_empty() {
+                "0".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        }
+    }
+}
+
+fn extract_numbers(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_ascii_digit() {
+            let start = i;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            let raw: String = chars[start..i].iter().collect();
+            out.push(normalize_number(&raw));
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn extract_quoted(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for quote in ['"', '\'', '`'] {
+        let mut parts = text.split(quote);
+        let _ = parts.next();
+        while let (Some(inner), Some(_)) = (parts.next(), parts.next()) {
+            let inner = inner.trim();
+            if inner.len() >= 3 && inner.chars().any(|c| c.is_ascii_alphabetic()) {
+                out.push(inner.to_ascii_lowercase());
+            }
+        }
+    }
+    out
+}
+
+/// Identifier-like tokens that must appear verbatim in the cited evidence:
+/// underscore names, ALL-CAPS names, and letter/digit mixes such as `f32`.
+fn is_identifier_anchor(token: &str) -> bool {
+    if token.len() < 3 {
+        return false;
+    }
+    if token.contains('_') {
+        return true;
+    }
+    let has_digit = token.chars().any(|c| c.is_ascii_digit());
+    let has_alpha = token.chars().any(|c| c.is_ascii_alphabetic());
+    let all_upper = token.chars().all(|c| !c.is_ascii_lowercase());
+    (has_digit && has_alpha) || all_upper
+}
+
+/// Split a claim into atomic clauses so that one fabricated conjunct cannot hide
+/// behind a supported one.
+fn split_clauses(claim: &str) -> Vec<String> {
+    let mut clauses = Vec::new();
+    for sentence in claim.split(['.', ';', '!', '?', '\n']) {
+        for part in sentence.split(',') {
+            for sub in part.split(" and ") {
+                let trimmed = sub.trim();
+                if !trimmed.is_empty() {
+                    clauses.push(trimmed.to_string());
+                }
+            }
+        }
+    }
+    clauses
+}
+
+fn negation_flags(tokens: &[String]) -> Vec<bool> {
+    // A two-token window. A wider window produced false rejects on ordinary code:
+    // `if !header.starts_with("RI_INDEX_V1")` would mark the quoted constant as
+    // negated. Scope handling is inherently approximate without a parser; this is
+    // the conservative middle ground.
+    tokens
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            let start = index.saturating_sub(2);
+            tokens[start..index].iter().any(|t| is_negation_cue(t))
+        })
+        .collect()
+}
+
+/// True when `candidate` is the negated/antonym form of `base` (`unsafe` for
+/// `safe`). This blocks a claim from being grounded by its opposite even when the
+/// rest of the sentence overlaps.
+fn is_negated_form_of(candidate: &str, base: &str) -> bool {
+    ["un", "in", "im", "dis", "non", "ir", "anti"]
+        .iter()
+        .any(|prefix| {
+            candidate.starts_with(prefix)
+                && candidate.len() > prefix.len() + 2
+                && &candidate[prefix.len()..] == base
+        })
+}
+
+fn clause_support(
+    clause: &str,
+    evidence: &Evidence,
+    evidence_tokens: &[String],
+) -> Result<(), String> {
+    let claim_tokens = tokenize_with_negation(clause);
+    let informative: Vec<(usize, &String)> = claim_tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, token)| !STOPWORDS.contains(&token.as_str()) && token.len() >= 2)
+        .collect();
+    if informative.is_empty() {
+        return Ok(());
+    }
+
+    let claim_negated = negation_flags(&claim_tokens);
+    let evidence_negated = negation_flags(evidence_tokens);
+
+    let mut matches: Vec<(usize, usize)> = Vec::new();
+    for (claim_index, token) in &informative {
+        if let Some(evidence_index) = evidence_tokens
+            .iter()
+            .position(|candidate| tokens_related(token, candidate))
+        {
+            if claim_negated[*claim_index] != evidence_negated[evidence_index] {
+                return Err(format!(
+                    "negation polarity differs between the claim and the cited evidence for '{token}'"
+                ));
+            }
+            matches.push((*claim_index, evidence_index));
+        }
+    }
+
+    if matches.is_empty() {
+        return Err(format!(
+            "no informative token from '{clause}' appears in the cited evidence"
+        ));
+    }
+
+    // Antonym guard: an unmatched content word whose opposite form is present in
+    // the evidence means the claim asserts the negation of what the source states.
+    for (claim_index, token) in &informative {
+        if matches.iter().any(|(index, _)| index == claim_index) {
+            continue;
+        }
+        if let Some(opposite) = evidence_tokens
+            .iter()
+            .find(|candidate| is_negated_form_of(candidate, token))
+        {
+            return Err(format!(
+                "claim states '{token}' while the cited evidence states its negated form '{opposite}'"
+            ));
+        }
+    }
+
+    if matches.len() * 2 < informative.len() {
+        return Err(format!(
+            "only {}/{} informative tokens from '{clause}' appear in the cited evidence",
+            matches.len(),
+            informative.len()
+        ));
+    }
+
+    // Relation direction: matched claim tokens must appear in the same relative
+    // order in the evidence. A reversed relation flips this order.
+    let mut previous: Option<usize> = None;
+    for (_, evidence_index) in &matches {
+        if let Some(last) = previous {
+            if *evidence_index < last {
+                return Err(format!(
+                    "claim reverses the relation order found in the cited evidence for '{clause}'"
+                ));
+            }
+        }
+        previous = Some(*evidence_index);
+    }
+
+    let _ = evidence;
+    Ok(())
+}
+
+/// Conservative, dependency-free claim support check.
+///
+/// It is deliberately stricter than word overlap: numbers and identifiers must
+/// appear verbatim, negation polarity must agree, matched terms must keep their
+/// order, and every atomic clause must be at least half covered. Word overlap by
+/// itself is not treated as proof of correctness, and a refusal here means "not
+/// verified", not "false".
+pub fn assess_claim_support(claim: &str, evidence_item: &Evidence) -> SupportOutcome {
+    let claim = claim.trim();
+    if claim.is_empty() {
+        return SupportOutcome::Unsupported("claim is empty".to_string());
     }
 
     let mut evidence_text = evidence_item.text.clone();
     evidence_text.push(' ');
     evidence_text.push_str(&evidence_item.kind);
-    if let Some(ref sym) = evidence_item.symbol {
+    if let Some(ref symbol) = evidence_item.symbol {
         evidence_text.push(' ');
-        evidence_text.push_str(sym);
+        evidence_text.push_str(symbol);
     }
-    if let Some(p) = evidence_item.path.to_str() {
+    if let Some(path) = evidence_item.path.to_str() {
         evidence_text.push(' ');
-        evidence_text.push_str(p);
+        evidence_text.push_str(path);
     }
+    let evidence_tokens = tokenize_with_negation(&evidence_text);
+    let evidence_numbers = extract_numbers(&evidence_text);
+    let evidence_lower = evidence_text.to_ascii_lowercase();
 
-    let evidence_tokens = tokenize_words(&evidence_text);
-
-    let mut matched_count = 0;
-    for &claim_tok in &informative_tokens {
-        let is_matched = evidence_tokens.iter().any(|ev_tok| {
-            ev_tok == claim_tok
-                || (claim_tok.len() >= 3 && ev_tok.contains(claim_tok))
-                || (ev_tok.len() >= 3 && claim_tok.contains(ev_tok.as_str()))
-        });
-        if is_matched {
-            matched_count += 1;
+    // 1. Hard anchors: numbers, quoted strings, identifier-like names.
+    for number in extract_numbers(claim) {
+        if !evidence_numbers.contains(&number) {
+            return SupportOutcome::Unsupported(format!(
+                "claim states the number '{number}', which is absent from the cited evidence"
+            ));
+        }
+    }
+    for quoted in extract_quoted(claim) {
+        if !evidence_lower.contains(&quoted) {
+            return SupportOutcome::Unsupported(format!(
+                "claim quotes '{quoted}', which is absent from the cited evidence"
+            ));
+        }
+    }
+    for token in tokenize_words(claim) {
+        if is_identifier_anchor(&token) && !evidence_tokens.iter().any(|t| t == &token) {
+            return SupportOutcome::Unsupported(format!(
+                "claim names '{token}', which is absent from the cited evidence"
+            ));
         }
     }
 
-    if matched_count == 0 {
-        return false;
+    // 2. Atomic clauses: every clause must be at least half covered.
+    for clause in split_clauses(claim) {
+        if let Err(reason) = clause_support(&clause, evidence_item, &evidence_tokens) {
+            return SupportOutcome::Unsupported(reason);
+        }
     }
 
-    if informative_tokens.len() <= 2 {
-        matched_count >= 1
-    } else {
-        matched_count >= 2 || (matched_count as f32 / informative_tokens.len() as f32) >= 0.20
-    }
+    SupportOutcome::Supported
+}
+
+pub fn evidence_supports_claim(claim: &str, evidence_item: &Evidence) -> bool {
+    matches!(
+        assess_claim_support(claim, evidence_item),
+        SupportOutcome::Supported
+    )
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -433,16 +726,25 @@ pub enum VerificationResult {
     },
 }
 
-pub fn verify_answer_citations(raw_answer: &str, evidence: &[Evidence]) -> VerificationResult {
+/// Assess an answer and return the structured per-claim record.
+pub fn assess_answer_citations(raw_answer: &str, evidence: &[Evidence]) -> AnswerAssessment {
     let trimmed = raw_answer.trim();
     if trimmed.is_empty() || trimmed.contains("Insufficient repository evidence") {
-        return VerificationResult::Refused {
+        return AnswerAssessment {
+            accepted: false,
+            verified_text: String::new(),
+            declared_citations: 0,
+            resolved_citations: 0,
+            verified_citations: 0,
+            claims: Vec::new(),
             reason: "Model signaled insufficient evidence or returned empty answer".to_string(),
         };
     }
 
     let mut verified_lines = Vec::new();
-    let mut total_verified_citations = 0;
+    let mut claims = Vec::new();
+    let mut declared = 0usize;
+    let mut resolved = 0usize;
 
     for line in trimmed.lines() {
         let line_trimmed = line.trim();
@@ -451,62 +753,140 @@ pub fn verify_answer_citations(raw_answer: &str, evidence: &[Evidence]) -> Verif
         }
 
         let citations = parse_citations(line_trimmed);
+        let claim_text = extract_claim_text(line_trimmed);
         if citations.is_empty() {
-            return VerificationResult::Refused {
+            claims.push(ClaimAssessment {
+                claim: claim_text,
+                citations: Vec::new(),
+                citation_resolved: false,
+                supported: false,
+                reason: "line contains an uncited assertion".to_string(),
+            });
+            return AnswerAssessment {
+                accepted: false,
+                verified_text: String::new(),
+                declared_citations: declared,
+                resolved_citations: resolved,
+                verified_citations: 0,
+                claims,
                 reason: format!("Line contains uncited assertion: '{line_trimmed}'"),
             };
         }
 
-        let claim_text = extract_claim_text(line_trimmed);
+        let mut line_citations = Vec::new();
+        let mut line_supported = false;
+        let mut line_reason = String::new();
+        let mut line_resolved = true;
 
-        let mut line_citations_count = 0;
-        for c_res in citations {
-            match c_res {
-                Ok(c) => {
-                    let resolved = match resolve_citation(&c, evidence) {
-                        Some(item) => item,
-                        None => {
-                            return VerificationResult::Refused {
-                                reason: format!(
-                                    "Citation '{:?}' is not found in retrieved evidence",
-                                    c
-                                ),
-                            };
+        for citation in citations {
+            declared += 1;
+            match citation {
+                Ok(reference) => {
+                    let rendered = format!("{reference:?}");
+                    let resolved_item = resolve_citation(&reference, evidence);
+                    match resolved_item {
+                        Some(item) => {
+                            resolved += 1;
+                            line_citations.push(item.citation());
+                            match assess_claim_support(&claim_text, item) {
+                                SupportOutcome::Supported => line_supported = true,
+                                SupportOutcome::Unsupported(reason) => {
+                                    if line_reason.is_empty() {
+                                        line_reason = reason;
+                                    }
+                                }
+                            }
                         }
-                    };
-
-                    if !evidence_supports_claim(&claim_text, resolved) {
-                        return VerificationResult::Refused {
-                            reason: format!(
-                                "Cited evidence [{}] does not support claim: '{claim_text}'",
-                                resolved.citation()
-                            ),
-                        };
+                        None => {
+                            line_resolved = false;
+                            line_reason =
+                                format!("citation '{rendered}' is not found in retrieved evidence");
+                            break;
+                        }
                     }
-
-                    line_citations_count += 1;
                 }
-                Err(err) => {
-                    return VerificationResult::Refused {
-                        reason: format!("Invalid citation format on line: {err}"),
-                    };
+                Err(error) => {
+                    line_resolved = false;
+                    line_reason = format!("invalid citation format: {error}");
+                    break;
                 }
             }
         }
 
-        total_verified_citations += line_citations_count;
+        let supported = line_resolved && line_supported;
+        claims.push(ClaimAssessment {
+            claim: claim_text.clone(),
+            citations: line_citations,
+            citation_resolved: line_resolved,
+            supported,
+            reason: if supported {
+                "supported by the cited evidence".to_string()
+            } else if line_reason.is_empty() {
+                "no cited span supports this claim".to_string()
+            } else {
+                line_reason.clone()
+            },
+        });
+
+        if !line_resolved {
+            return AnswerAssessment {
+                accepted: false,
+                verified_text: String::new(),
+                declared_citations: declared,
+                resolved_citations: resolved,
+                verified_citations: 0,
+                claims,
+                reason: format!("Citation could not be resolved on line: '{line_trimmed}'"),
+            };
+        }
+        if !supported {
+            return AnswerAssessment {
+                accepted: false,
+                verified_text: String::new(),
+                declared_citations: declared,
+                resolved_citations: resolved,
+                verified_citations: 0,
+                claims,
+                reason: format!("Cited evidence does not support claim: '{claim_text}'"),
+            };
+        }
         verified_lines.push(line_trimmed.to_string());
     }
 
-    if total_verified_citations == 0 || verified_lines.is_empty() {
-        return VerificationResult::Refused {
+    if verified_lines.is_empty() || resolved == 0 {
+        return AnswerAssessment {
+            accepted: false,
+            verified_text: String::new(),
+            declared_citations: declared,
+            resolved_citations: resolved,
+            verified_citations: 0,
+            claims,
             reason: "Zero valid citations verified across entire answer".to_string(),
         };
     }
 
-    VerificationResult::Accepted {
+    AnswerAssessment {
+        accepted: true,
         verified_text: verified_lines.join("\n"),
-        verified_citations: total_verified_citations,
+        declared_citations: declared,
+        resolved_citations: resolved,
+        verified_citations: resolved,
+        claims,
+        reason: "all cited lines resolved and were supported by the cited evidence".to_string(),
+    }
+}
+
+pub fn verify_answer_citations(raw_answer: &str, evidence: &[Evidence]) -> VerificationResult {
+    let assessment = assess_answer_citations(raw_answer, evidence);
+    if assessment.accepted {
+        VerificationResult::Accepted {
+            verified_text: assessment.verified_text,
+            verified_citations: assessment.verified_citations,
+        }
+    } else {
+        VerificationResult::Refused {
+            reason: assessment.reason,
+        }
     }
 }
 
@@ -598,19 +978,137 @@ mod tests {
         assert!(matches!(citations[0], Err(CitationError::NonNumeric(_))));
     }
 
+    fn api_evidence() -> Vec<Evidence> {
+        vec![Evidence {
+            path: PathBuf::from("api.rs"),
+            start_line: 1,
+            end_line: 3,
+            score: 1.0,
+            source: "hybrid".to_string(),
+            kind: "api module".to_string(),
+            symbol: None,
+            text: "pub fn health() -> &'static str { \"status ok\" }\npub fn search(query: &str) -> &'static str { \"path line score source text\" }\npub fn reload(commit: &str) -> &'static str { \"reloaded commit\" }".to_string(),
+        }]
+    }
+
     #[test]
     fn verify_answer_accepts_valid() {
         let ev = sample_evidence();
-        let ans =
-            "Validation ensures safe paths [E1].\nStorage holds items [src/storage.rs:10-20].";
+        let ans = "The validate_relative_path function rejects empty paths [E1].\nStorage keeps a count field [src/storage.rs:10-20].";
         let res = verify_answer_citations(ans, &ev);
-        assert!(matches!(res, VerificationResult::Accepted { .. }));
+        assert!(
+            matches!(res, VerificationResult::Accepted { .. }),
+            "expected accepted, got: {res:?}"
+        );
+    }
+
+    #[test]
+    fn claim_support_accepts_grounded_statement() {
+        let ev = api_evidence();
+        assert_eq!(
+            assess_claim_support("The health function returns status ok", &ev[0]),
+            SupportOutcome::Supported
+        );
+    }
+
+    #[test]
+    fn claim_support_rejects_wrong_number() {
+        let ev = api_evidence();
+        let outcome = assess_claim_support("The health function returns 5 status codes", &ev[0]);
+        assert!(
+            matches!(outcome, SupportOutcome::Unsupported(_)),
+            "fabricated number must be rejected, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn claim_support_rejects_reversed_negation() {
+        let ev = api_evidence();
+        let outcome = assess_claim_support("The health function does not return status ok", &ev[0]);
+        assert!(
+            matches!(outcome, SupportOutcome::Unsupported(_)),
+            "reversed negation must be rejected, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn claim_support_rejects_reversed_relation() {
+        let ev = api_evidence();
+        let outcome = assess_claim_support("status ok returns the health function", &ev[0]);
+        assert!(
+            matches!(outcome, SupportOutcome::Unsupported(_)),
+            "reversed relation must be rejected, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn claim_support_rejects_extra_fabricated_claim() {
+        let ev = api_evidence();
+        let outcome = assess_claim_support(
+            "The health function returns status ok and the reload function deletes the database",
+            &ev[0],
+        );
+        assert!(
+            matches!(outcome, SupportOutcome::Unsupported(_)),
+            "extra fabricated conjunct must be rejected, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn claim_support_rejects_fabricated_identifier() {
+        let ev = api_evidence();
+        let outcome = assess_claim_support("The health function calls RI_SECRET_HEADER", &ev[0]);
+        assert!(
+            matches!(outcome, SupportOutcome::Unsupported(_)),
+            "fabricated identifier must be rejected, got: {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn citation_resolution_is_separate_from_claim_support() {
+        let ev = api_evidence();
+        // The cited span exists, but it does not support the claim.
+        let unsupported =
+            assess_answer_citations("The health function deletes all files [api.rs:1-3].", &ev);
+        assert!(!unsupported.accepted);
+        assert_eq!(unsupported.claims.len(), 1);
+        assert!(unsupported.claims[0].citation_resolved);
+        assert!(!unsupported.claims[0].supported);
+
+        // Same span, supported claim: citation resolution and support both hold.
+        let supported =
+            assess_answer_citations("The health function returns status ok [api.rs:1-3].", &ev);
+        assert!(supported.accepted, "reason: {}", supported.reason);
+        assert!(supported.claims[0].citation_resolved);
+        assert!(supported.claims[0].supported);
+        assert_eq!(supported.resolved_citations, 1);
+    }
+
+    #[test]
+    fn claim_support_does_not_borrow_from_negated_word_form() {
+        // "safe" must not be satisfied by "unsafe": the token relation is not a
+        // substring match.
+        let ev = Evidence {
+            path: PathBuf::from("security.rs"),
+            start_line: 1,
+            end_line: 1,
+            score: 1.0,
+            source: "lexical".to_string(),
+            kind: "note".to_string(),
+            symbol: None,
+            text: "The scanner marks the input unsafe.".to_string(),
+        };
+        let outcome = assess_claim_support("The scanner marks the input safe", &ev);
+        assert!(
+            matches!(outcome, SupportOutcome::Unsupported(_)),
+            "safe must not be grounded by unsafe, got: {outcome:?}"
+        );
     }
 
     #[test]
     fn verify_answer_refuses_uncited_line() {
         let ev = sample_evidence();
-        let ans = "Validation ensures safe paths [E1].\nAnd this is an unverified assertion.";
+        let ans = "The validate_relative_path function rejects empty paths [E1].\nAnd this is an unverified assertion.";
         let res = verify_answer_citations(ans, &ev);
         assert!(matches!(res, VerificationResult::Refused { .. }));
     }

@@ -558,17 +558,17 @@ fn answer_command_rejects_reversed_line_range() {
 }
 
 #[test]
-fn answer_command_accepts_valid_span_and_evidence_id() {
-    let script = "#!/bin/sh\nprintf '%s\\n' 'The needle function returns true [src/lib.rs:10-12].' 'Also verified by [E1].'\n";
+fn answer_command_renders_selected_source_verbatim() {
+    let script = "#!/bin/sh\nprintf '%s\\n' '[E1]'\n";
     let (success, stdout) = run_answer_with_fake_ollama(script);
     assert!(success);
     assert!(
-        stdout.contains("The needle function returns true [src/lib.rs:10-12]."),
+        stdout.contains("pub fn needle()"),
         "stdout should contain verified line: {}",
         stdout
     );
     assert!(
-        stdout.contains("Also verified by [E1]."),
+        stdout.contains("[src/lib.rs:10-12]"),
         "stdout should contain verified E1 line: {}",
         stdout
     );

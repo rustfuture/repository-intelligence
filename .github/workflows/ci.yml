@@ -20,6 +20,7 @@ jobs:
       - run: cargo check --locked --all-targets
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      - run: python3 -m unittest discover -s evaluation/v3 -p 'test_*.py'
       - run: python3 evaluation/evaluate.py
       - run: python3 evaluation/evaluate_modes.py
 

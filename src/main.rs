@@ -27,7 +27,8 @@ fn main() {
     let mut args = raw_args.into_iter();
     let mode = args.next().unwrap_or_else(|| ".".into());
     match mode.as_str() {
-        "--answer" => answer_command(&mut args),
+        "--answer" => answer_command(&mut args, false),
+        "--answer-json" => answer_command(&mut args, true),
         "--serve" => {
             let address = args.next().unwrap_or_else(|| "127.0.0.1:8080".into());
             let repository = args.next().unwrap_or_else(|| ".".into());
@@ -108,22 +109,33 @@ fn main() {
     }
 }
 
-fn answer_command(args: &mut impl Iterator<Item = String>) {
+fn answer_command(args: &mut impl Iterator<Item = String>, json_mode: bool) {
     let repository = args.next().unwrap_or_else(|| ".".into());
     let question = args.collect::<Vec<_>>().join(" ");
     let index = Index::build(Path::new(&repository)).expect("index repository");
     let evidence_items = index.build_evidence(&question, 5);
-    if evidence_items.is_empty()
-        || index
-            .search_evidence(&question, 1, RetrievalMode::Lexical)
-            .is_empty()
-    {
-        println!(
-            "commit={}\nmodel=none\nduration_ms=0\ncost_usd=0\nInsufficient repository evidence to answer this question.",
-            index.revision().unwrap_or("unknown")
-        );
+    let has_lexical_anchor = !index
+        .search_evidence(&question, 1, RetrievalMode::Lexical)
+        .is_empty();
+    let commit = index.revision().unwrap_or("unknown").to_string();
+
+    if evidence_items.is_empty() || !has_lexical_anchor {
+        // No model call is made here. This is a pre-model lexical-anchor refusal,
+        // which is a different fact from "the model answered and the guard
+        // rejected it", so the two are reported separately.
+        if json_mode {
+            println!(
+                "{}",
+                answer_json_pre_model_refusal(&commit, evidence_items.len())
+            );
+        } else {
+            println!(
+                "commit={commit}\nmodel=none\nduration_ms=0\ncost_usd=0\nInsufficient repository evidence to answer this question."
+            );
+        }
         return;
     }
+
     let evidence = format_evidence(&evidence_items);
     let model = env::var("AGY_MODEL").unwrap_or_else(|_| "gemini-3.8-flash-low".to_owned());
     let provider: Box<dyn Provider> = if env::var("USE_OLLAMA").is_ok() {
@@ -133,37 +145,164 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
     } else {
         Box::new(AgyProvider { model })
     };
-    let mut answer = provider
-        .answer(&question, &evidence)
-        .expect("run LLM provider");
 
-    let verification =
-        repository_intelligence::citation::verify_answer_citations(&answer.text, &evidence_items);
-    match verification {
-        repository_intelligence::citation::VerificationResult::Accepted {
-            verified_text,
-            verified_citations: _,
-        } => {
-            answer.text = verified_text;
-        }
-        repository_intelligence::citation::VerificationResult::Refused { reason } => {
-            if env::var("RI_DEBUG_CITATION").is_ok() {
-                eprintln!("debug verification refused: {reason}");
+    let answer = match provider.answer(&question, &evidence) {
+        Ok(answer) => answer,
+        Err(error) => {
+            // A provider failure is reported as a failure. It is not converted
+            // into a refusal, because that would misattribute an infrastructure
+            // error to the evidence.
+            if json_mode {
+                println!(
+                    "{}",
+                    answer_json_model_error(&commit, &error.to_string(), &evidence_items)
+                );
+            } else {
+                println!(
+                    "commit={commit}\nmodel=none\nduration_ms=0\ncost_usd=unknown\nmodel_error={}",
+                    error
+                );
             }
-            answer.text = "Insufficient repository evidence to answer this question.".to_owned();
+            std::process::exit(2);
         }
+    };
+
+    let assessment =
+        repository_intelligence::extractive::assess_selection(&answer.text, &evidence_items);
+    let decision = if assessment.accepted {
+        "accepted"
+    } else {
+        "refused"
+    };
+    let final_text = if assessment.accepted {
+        assessment.verified_text.clone()
+    } else {
+        "Insufficient repository evidence to answer this question.".to_owned()
+    };
+
+    if env::var("RI_DEBUG_CITATION").is_ok() && !assessment.accepted {
+        eprintln!("debug verification refused: {}", assessment.reason);
     }
-    println!(
-        "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
-        index.revision().unwrap_or("unknown"),
-        answer.model,
+
+    if json_mode {
+        println!(
+            "{}",
+            answer_json(
+                &commit,
+                &answer,
+                decision,
+                &assessment,
+                &final_text,
+                &evidence_items
+            )
+        );
+    } else {
+        println!(
+            "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
+            commit,
+            answer.model,
+            answer.duration_ms,
+            answer
+                .cost_usd
+                .map(|cost| cost.to_string())
+                .unwrap_or_else(|| "unknown".to_owned()),
+            final_text
+        );
+    }
+}
+
+fn evidence_json(evidence: &[repository_intelligence::Evidence]) -> String {
+    let items = evidence
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            format!(
+                "{{\"index\":{},\"citation\":\"{}\",\"path\":\"{}\",\"start_line\":{},\"end_line\":{},\"kind\":\"{}\"}}",
+                index + 1,
+                json_escape(&item.citation()),
+                json_escape(&item.path.display().to_string()),
+                item.start_line,
+                item.end_line,
+                json_escape(&item.kind)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{items}]")
+}
+
+fn claims_json(assessment: &repository_intelligence::citation::AnswerAssessment) -> String {
+    let items = assessment
+        .claims
+        .iter()
+        .map(|claim| {
+            let citations = claim
+                .citations
+                .iter()
+                .map(|citation| format!("\"{}\"", json_escape(citation)))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"claim\":\"{}\",\"citations\":[{}],\"citation_resolved\":{},\"supported\":{},\"reason\":\"{}\"}}",
+                json_escape(claim.claim.trim()),
+                citations,
+                claim.citation_resolved,
+                claim.supported,
+                json_escape(&claim.reason)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{items}]")
+}
+
+fn answer_json(
+    commit: &str,
+    answer: &repository_intelligence::llm::LlmAnswer,
+    decision: &str,
+    assessment: &repository_intelligence::citation::AnswerAssessment,
+    final_text: &str,
+    evidence: &[repository_intelligence::Evidence],
+) -> String {
+    format!(
+        "{{\"decision\":\"{}\",\"model_called\":true,\"model\":\"{}\",\"commit\":\"{}\",\"duration_ms\":{},\"cost_usd\":{},\"reason\":\"{}\",\"raw_answer\":\"{}\",\"final_text\":\"{}\",\"declared_citations\":{},\"resolved_citations\":{},\"claims\":{},\"evidence\":{}}}",
+        json_escape(decision),
+        json_escape(&answer.model),
+        json_escape(commit),
         answer.duration_ms,
         answer
             .cost_usd
             .map(|cost| cost.to_string())
-            .unwrap_or_else(|| "unknown".to_owned()),
-        answer.text
-    );
+            .unwrap_or_else(|| "null".to_owned()),
+        json_escape(&assessment.reason),
+        json_escape(&answer.text),
+        json_escape(final_text),
+        assessment.declared_citations,
+        assessment.resolved_citations,
+        claims_json(assessment),
+        evidence_json(evidence)
+    )
+}
+
+fn answer_json_pre_model_refusal(commit: &str, evidence_count: usize) -> String {
+    format!(
+        "{{\"decision\":\"pre_model_refusal\",\"model_called\":false,\"model\":\"none\",\"commit\":\"{}\",\"duration_ms\":0,\"cost_usd\":null,\"reason\":\"no lexical anchor in the repository for this question; no model call was made\",\"raw_answer\":\"\",\"final_text\":\"Insufficient repository evidence to answer this question.\",\"declared_citations\":0,\"resolved_citations\":0,\"claims\":[],\"evidence_count\":{}}}",
+        json_escape(commit),
+        evidence_count
+    )
+}
+
+fn answer_json_model_error(
+    commit: &str,
+    error: &str,
+    evidence: &[repository_intelligence::Evidence],
+) -> String {
+    format!(
+        "{{\"decision\":\"model_error\",\"model_called\":true,\"model\":\"none\",\"commit\":\"{}\",\"duration_ms\":0,\"cost_usd\":null,\"reason\":\"provider failed: {}\",\"raw_answer\":\"\",\"final_text\":\"\",\"declared_citations\":0,\"resolved_citations\":0,\"claims\":[],\"evidence\":{}}}",
+        json_escape(commit),
+        json_escape(error),
+        evidence_json(evidence)
+    )
 }
 
 fn serve(address: &str, root: &Path) {

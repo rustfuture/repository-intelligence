@@ -441,7 +441,7 @@
     "id": "HELD-12",
     "split": "heldout",
     "category": "security",
-    "question": "Which specific file name without extension is blocked by filter_sensitive_file?",
+    "question": "Which exact filename is blocked by filter_sensitive_file?",
     "answerable": true,
     "expected_sources": [
       {
