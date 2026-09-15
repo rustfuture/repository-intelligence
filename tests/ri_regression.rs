@@ -301,3 +301,148 @@ fn answer_command_rejects_wrong_line_and_range_citations() {
     );
     assert!(!stdout.contains("[Unverified citation removed]"));
 }
+
+#[test]
+fn dimension_mismatch_fails_with_invalid_data() {
+    let root = temp_dir("dimension-guard");
+    let index_path = root.join("mismatch.ri");
+    let content = format!(
+        "RI_INDEX_V1\nrevision\t{}\nprovider\t{}\ndimension\t{}\nfile\t{}\t{}\n",
+        hex("abc1234"),
+        hex("nomic-embed-text"),
+        hex("768"),
+        hex("test.rs"),
+        hex("pub fn needle() {}")
+    );
+    fs::write(&index_path, content).expect("write mismatched index");
+
+    let result = Index::load_from(&index_path);
+    assert!(
+        result.is_err(),
+        "load_from must reject mismatched embedding dimension"
+    );
+    let err = result.err().unwrap();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("embedding dimension mismatch"),
+        "error message must clearly mention dimension mismatch: {}",
+        err
+    );
+}
+
+#[test]
+fn dirty_working_tree_labels_revision_with_dirty() {
+    let root = temp_dir("dirty-label");
+    let file = root.join("source.rs");
+    fs::write(&file, "pub fn initial() {}\n").expect("write file");
+
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .args(["-C", root.to_str().expect("utf8 temp path")])
+            .args(args)
+            .output()
+            .expect("run git")
+    };
+    assert!(git(&["init", "-q"]).status.success());
+    assert!(git(&["config", "user.email", "test@example.invalid"])
+        .status
+        .success());
+    assert!(
+        git(&["config", "user.name", "Repository Intelligence Tests"])
+            .status
+            .success()
+    );
+    assert!(git(&["add", "source.rs"]).status.success());
+    assert!(git(&["commit", "-qm", "initial"]).status.success());
+
+    let clean_index = Index::build(&root).expect("build clean index");
+    let clean_rev = clean_index.revision().expect("clean revision");
+    assert!(!clean_rev.ends_with("-dirty"));
+
+    fs::write(&file, "pub fn modified_in_working_tree() {}\n").expect("modify file");
+    let dirty_index = Index::build(&root).expect("build dirty index");
+    let dirty_rev = dirty_index.revision().expect("dirty revision");
+    assert!(
+        dirty_rev.ends_with("-dirty"),
+        "uncommitted working tree must be labeled with -dirty suffix: {}",
+        dirty_rev
+    );
+}
+
+#[test]
+fn file_deletion_purges_lexical_and_vector_chunks() {
+    let root = temp_dir("purge-deletion");
+    let f1 = root.join("keep.rs");
+    let f2 = root.join("delete.rs");
+    fs::write(&f1, "pub fn permanent_worker() {}\n").expect("write keep");
+    fs::write(&f2, "pub fn ephemeral_secret_payload() {}\n").expect("write delete");
+
+    let mut index = Index::build(&root).expect("build index");
+    assert_eq!(index.file_count(), 2);
+    assert_eq!(index.search("ephemeral", 5).len(), 1);
+    assert_eq!(
+        index
+            .search_evidence(
+                "ephemeral_secret_payload",
+                5,
+                repository_intelligence::RetrievalMode::Semantic
+            )
+            .len(),
+        1
+    );
+
+    fs::remove_file(&f2).expect("remove file");
+    index.sync_worktree(&root).expect("sync worktree");
+
+    assert_eq!(index.file_count(), 1);
+    assert!(
+        index.search("ephemeral", 5).is_empty(),
+        "lexical hits must be purged after file deletion"
+    );
+    assert!(
+        index
+            .search_evidence(
+                "ephemeral_secret_payload",
+                5,
+                repository_intelligence::RetrievalMode::Semantic
+            )
+            .is_empty(),
+        "vector chunks must be purged after file deletion"
+    );
+}
+
+#[test]
+fn unanswerable_question_yields_exact_refusal() {
+    let root = temp_dir("unanswerable-guard");
+    fs::write(root.join("code.rs"), "pub fn compute_hash() {}\n").expect("write code");
+
+    let index = Index::build(&root).expect("build index");
+    let result = index.answer_context("quantum database migration", 5);
+    assert!(
+        result.is_none(),
+        "answer_context must return None when no evidence exists"
+    );
+}
+
+#[test]
+fn ollama_embedding_roundtrip_or_offline_fallback() {
+    let embedding = repository_intelligence::OllamaEmbedding::default();
+    assert_eq!(embedding.name(), "nomic-embed-text");
+    assert_eq!(embedding.dimension(), 768);
+
+    match embedding.try_embed("unit test vector generation") {
+        Ok(vector) => {
+            assert_eq!(
+                vector.len(),
+                768,
+                "nomic-embed-text must yield 768-dim vector"
+            );
+            let norm: f32 = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-4, "vector must be L2 normalized");
+        }
+        Err(err) => {
+            // In offline environments without Ollama, try_embed returns io::Error
+            assert!(!err.to_string().is_empty());
+        }
+    }
+}

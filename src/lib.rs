@@ -132,6 +132,77 @@ impl EmbeddingProvider for HashEmbedding {
     }
 }
 
+/// A local neural embedding provider backed by an Ollama daemon.
+/// Defaults to `nomic-embed-text` with dimension 768 on localhost:11434.
+#[derive(Debug, Clone)]
+pub struct OllamaEmbedding {
+    model: String,
+    dimension: usize,
+    endpoint: String,
+}
+
+impl OllamaEmbedding {
+    pub fn new(model: impl Into<String>, dimension: usize, endpoint: impl Into<String>) -> Self {
+        Self {
+            model: model.into(),
+            dimension,
+            endpoint: endpoint.into(),
+        }
+    }
+
+    pub fn nomic_default() -> Self {
+        let endpoint =
+            std::env::var("RI_EMBEDDING_URL").unwrap_or_else(|_| "127.0.0.1:11434".to_owned());
+        let model =
+            std::env::var("RI_EMBEDDING_MODEL").unwrap_or_else(|_| "nomic-embed-text".to_owned());
+        Self::new(model, 768, endpoint)
+    }
+
+    pub fn try_embed(&self, text: &str) -> io::Result<Vec<f32>> {
+        http_post_embed(&self.endpoint, &self.model, text)
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.try_embed("ping").is_ok()
+    }
+}
+
+impl Default for OllamaEmbedding {
+    fn default() -> Self {
+        Self::nomic_default()
+    }
+}
+
+impl EmbeddingProvider for OllamaEmbedding {
+    fn name(&self) -> &str {
+        &self.model
+    }
+
+    fn dimension(&self) -> usize {
+        self.dimension
+    }
+
+    fn embed(&self, text: &str) -> Vec<f32> {
+        match self.try_embed(text) {
+            Ok(vec) => vec,
+            Err(err) => panic!(
+                "Ollama embedding request failed for model '{}' at '{}': {}. Ensure Ollama is running or use HashEmbedding.",
+                self.model, self.endpoint, err
+            ),
+        }
+    }
+}
+
+pub fn default_provider_from_env() -> Arc<dyn EmbeddingProvider> {
+    if let Ok(provider) = std::env::var("RI_EMBEDDING_PROVIDER") {
+        let lower = provider.to_ascii_lowercase();
+        if lower.contains("nomic") || lower.contains("ollama") {
+            return Arc::new(OllamaEmbedding::default());
+        }
+    }
+    Arc::new(HashEmbedding::default())
+}
+
 pub struct Index {
     files: HashMap<PathBuf, Vec<String>>,
     terms: HashMap<String, HashSet<(PathBuf, usize)>>,
@@ -164,7 +235,7 @@ impl Index {
     }
 
     pub fn build(root: &Path) -> io::Result<Self> {
-        let mut index = Self::default();
+        let mut index = Self::with_embedding(default_provider_from_env());
         index.rebuild(root)?;
         index.revision = git_revision(root);
         index.refresh_commits(root);
@@ -397,6 +468,12 @@ impl Index {
         output.push_str("revision\t");
         output.push_str(&hex_encode(self.revision.as_deref().unwrap_or("")));
         output.push('\n');
+        output.push_str("provider\t");
+        output.push_str(&hex_encode(self.embedding.name()));
+        output.push('\n');
+        output.push_str("dimension\t");
+        output.push_str(&hex_encode(&self.embedding.dimension().to_string()));
+        output.push('\n');
         let mut paths: Vec<_> = self.files.keys().collect();
         paths.sort();
         for relative in paths {
@@ -424,6 +501,13 @@ impl Index {
     }
 
     pub fn load_from(path: &Path) -> io::Result<Self> {
+        Self::load_from_with_embedding(path, default_provider_from_env())
+    }
+
+    pub fn load_from_with_embedding(
+        path: &Path,
+        embedding: Arc<dyn EmbeddingProvider>,
+    ) -> io::Result<Self> {
         let content = fs::read_to_string(path)?;
         let mut lines = content.lines();
         if lines.next() != Some("RI_INDEX_V1") {
@@ -432,7 +516,7 @@ impl Index {
                 "unsupported repository-intelligence index format",
             ));
         }
-        let mut index = Self::default();
+        let mut index = Self::with_embedding(embedding);
         for line in lines {
             let fields: Vec<_> = line.split('\t').collect();
             match fields.as_slice() {
@@ -440,6 +524,25 @@ impl Index {
                     let revision = hex_decode(encoded)?;
                     if !revision.is_empty() {
                         index.revision = Some(revision);
+                    }
+                }
+                ["provider", encoded] => {
+                    let _provider = hex_decode(encoded)?;
+                }
+                ["dimension", encoded] => {
+                    let dim_str = hex_decode(encoded)?;
+                    if let Ok(dim) = dim_str.parse::<usize>() {
+                        if dim != index.embedding.dimension() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                format!(
+                                    "embedding dimension mismatch: index specifies {}, but provider '{}' has {}",
+                                    dim,
+                                    index.embedding.name(),
+                                    index.embedding.dimension()
+                                ),
+                            ));
+                        }
                     }
                 }
                 ["file", encoded_path, encoded_content] => {
@@ -1070,6 +1173,105 @@ fn json_escape(value: &str) -> String {
         .replace('"', "\\\"")
         .replace('\n', "\\n")
         .replace('\r', "\\r")
+}
+
+fn http_post_embed(endpoint: &str, model: &str, text: &str) -> io::Result<Vec<f32>> {
+    use std::io::{Read, Write};
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+
+    let host_port = endpoint
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/');
+
+    let addr = host_port.to_socket_addrs()?.next().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::AddrNotAvailable, "invalid endpoint address")
+    })?;
+
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
+    stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+
+    let escaped_text = json_escape(text);
+    let escaped_model = json_escape(model);
+    let body = format!(
+        r#"{{"model":"{}","input":"{}"}}"#,
+        escaped_model, escaped_text
+    );
+
+    let request = format!(
+        "POST /api/embed HTTP/1.0\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        host_port,
+        body.len(),
+        body
+    );
+
+    stream.write_all(request.as_bytes())?;
+
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response)?;
+
+    let response_str = String::from_utf8_lossy(&response);
+    let mut header_and_body = response_str.splitn(2, "\r\n\r\n");
+    let header = header_and_body.next().unwrap_or("");
+    let body_str = header_and_body.next().unwrap_or("");
+
+    let status_line = header.lines().next().unwrap_or("");
+    if !status_line.contains(" 200 ")
+        && !status_line.ends_with(" 200")
+        && !status_line.contains("200 OK")
+    {
+        return Err(io::Error::other(format!(
+            "Ollama embed error: {}",
+            status_line
+        )));
+    }
+
+    let vector_str = if let Some(start_idx) = body_str.find("\"embeddings\":[[") {
+        let slice = &body_str[start_idx + "\"embeddings\":[[".len()..];
+        let end_idx = slice.find("]]").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "malformed embeddings array in Ollama response",
+            )
+        })?;
+        &slice[..end_idx]
+    } else if let Some(start_idx) = body_str.find("\"embedding\":[") {
+        let slice = &body_str[start_idx + "\"embedding\":[".len()..];
+        let end_idx = slice.find(']').ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "malformed embedding array in Ollama response",
+            )
+        })?;
+        &slice[..end_idx]
+    } else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "no embeddings found in Ollama response. status: '{}', body: '{}'",
+                status_line, body_str
+            ),
+        ));
+    };
+
+    let mut vector = Vec::new();
+    for token in vector_str.split(',') {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            let val = trimmed.parse::<f32>().map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("failed to parse float: {}", e),
+                )
+            })?;
+            vector.push(val);
+        }
+    }
+
+    normalize(&mut vector);
+    Ok(vector)
 }
 
 impl fmt::Display for RetrievalMode {

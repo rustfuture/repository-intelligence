@@ -12,7 +12,15 @@ use std::{
 };
 
 fn main() {
-    let mut args = env::args().skip(1);
+    let mut raw_args: Vec<String> = env::args().skip(1).collect();
+    if let Some(pos) = raw_args.iter().position(|a| a == "--embedding") {
+        if pos + 1 < raw_args.len() {
+            let provider = raw_args.remove(pos + 1);
+            raw_args.remove(pos);
+            env::set_var("RI_EMBEDDING_PROVIDER", provider);
+        }
+    }
+    let mut args = raw_args.into_iter();
     let mode = args.next().unwrap_or_else(|| ".".into());
     match mode.as_str() {
         "--answer" => answer_command(&mut args),
@@ -116,7 +124,7 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
     let model = env::var("AGY_MODEL").unwrap_or_else(|_| "gemini-3.8-flash-low".to_owned());
     let provider: Box<dyn Provider> = if env::var("USE_OLLAMA").is_ok() {
         Box::new(OllamaProvider {
-            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "llama3".to_owned()),
+            model: env::var("OLLAMA_MODEL").unwrap_or_else(|_| "qwen2.5-coder:1.5b".to_owned()),
         })
     } else {
         Box::new(AgyProvider { model })
@@ -151,11 +159,12 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
         }
         verified_text.push('\n');
     }
-    answer.text = if verified_citations == 0 {
-        "Insufficient repository evidence to answer this question.".to_owned()
-    } else {
-        verified_text.trim().to_owned()
-    };
+    answer.text =
+        if verified_citations == 0 || verified_text.contains("Insufficient repository evidence") {
+            "Insufficient repository evidence to answer this question.".to_owned()
+        } else {
+            verified_text.trim().to_owned()
+        };
     println!(
         "commit={}\nmodel={}\nduration_ms={}\ncost_usd={}\n{}",
         index.revision().unwrap_or("unknown"),
@@ -171,6 +180,7 @@ fn answer_command(args: &mut impl Iterator<Item = String>) {
 
 fn parse_citation(value: &str) -> Option<(String, (usize, usize))> {
     let (path, range) = value.rsplit_once(':')?;
+    let path = path.trim_start_matches("./");
     if path.is_empty() {
         return None;
     }
@@ -181,7 +191,9 @@ fn parse_citation(value: &str) -> Option<(String, (usize, usize))> {
 }
 
 fn citation_is_supported(item: &Evidence, path: &str, start: usize, end: usize) -> bool {
-    item.path.to_string_lossy() == path && start >= item.start_line && end <= item.end_line
+    let item_path = item.path.to_string_lossy();
+    let clean_item = item_path.trim_start_matches("./");
+    clean_item == path && start >= item.start_line && end <= item.end_line
 }
 
 fn serve(address: &str, root: &Path) {

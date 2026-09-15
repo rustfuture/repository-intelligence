@@ -14,7 +14,11 @@ required_concepts = ("git diff", "added", "modified", "deleted", "commit")
 missing = [concept for concept in required_concepts if concept not in answer]
 if missing:
     raise SystemExit(f"answer is missing required concepts: {', '.join(missing)}")
-citations = re.findall(r"(?<![\w/.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9_-]+):(\d+)", output)
+body = "\n".join(
+    line for line in output.splitlines()
+    if not any(line.startswith(prefix) for prefix in ("commit=", "model=", "duration_ms=", "cost_usd="))
+)
+citations = re.findall(r"(?<![\w/.-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.[A-Za-z0-9_-]+):(\d+)", body)
 if not citations:
     raise SystemExit("no path:line citations found")
 for relative, raw_line in citations:
