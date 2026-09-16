@@ -31,19 +31,21 @@ def cosine(a, b):
     return sum(x*y for x, y in zip(a, b)) / denominator if denominator else 0.0
 
 
-def metrics(rankings):
+def metrics(rankings, answerable):
     ranks = []
-    for question, ranking in zip(questions, rankings):
+    for question, ranking in zip(answerable, rankings):
         rank = next((i + 1 for i, path in enumerate(ranking[:5]) if path == question["evidence"]), None)
         if rank is not None:
             ranks.append(rank)
-    return {"recall_at_5": len(ranks) / len(questions), "mrr": sum(1/rank for rank in ranks) / len(questions)}
+    n = len(answerable)
+    return {"recall_at_5": round(len(ranks) / n, 4) if n else 0.0, "mrr": round(sum(1/rank for rank in ranks) / n, 4) if n else 0.0}
 
 
+answerable = [q for q in questions if q.get("answerable", True) and q.get("evidence")]
 doc_vectors = embed([text for _, _, text in documents])
-query_vectors = embed([question["query"] for question in questions])
+query_vectors = embed([question["query"] for question in answerable])
 lexical_rankings, embedding_rankings, hybrid_rankings = [], [], []
-for question, query_vector in zip(questions, query_vectors):
+for question, query_vector in zip(answerable, query_vectors):
     output = subprocess.run(
         ["cargo", "run", "--quiet", "--locked", "--", str(corpus), *question["query"].split()],
         cwd=root, text=True, capture_output=True, check=True,
@@ -62,9 +64,10 @@ for question, query_vector in zip(questions, query_vectors):
 
 print(json.dumps({
     "questions": len(questions),
+    "answerable": len(answerable),
     "model": "nomic-embed-text",
-    "lexical": metrics(lexical_rankings),
-    "embedding": metrics(embedding_rankings),
-    "hybrid_rrf": metrics(hybrid_rankings),
+    "lexical": metrics(lexical_rankings, answerable),
+    "embedding": metrics(embedding_rankings, answerable),
+    "hybrid_rrf": metrics(hybrid_rankings, answerable),
     "scope": "fixed authored corpus; file-level relevance; local Ollama embeddings",
 }, indent=2))

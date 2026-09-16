@@ -7,8 +7,8 @@
 - `Index::save_to`/`load_from` provide the portable `RI_INDEX_V1` snapshot format; `--index` writes source, revision, and recent commit metadata, while `--load-index` queries a saved snapshot.
 - Git revision metadata and incremental A/M/D/C/T synchronization are supported; renames are handled as delete plus update, and dirty worktrees use hash-based refresh.
 - Local `/health`, `/search`, `/commits`, and `/reload` HTTP endpoints plus `--analytics` and `--commits` CLI modes are available.
-- Optional grounded answer generation supports the external AGY CLI and local Ollama, with model, duration, and provider-reported cost metadata.
-- Optional citation, semantic-concept, and prompt-injection smoke scripts remain separate from normal CI because they require an external model CLI.
+- Optional answer path uses `extractive-selection-v1`: the model returns evidence IDs only and the application renders verbatim source text with file/line references; extra prose, invalid IDs, and mixed selections are refused atomically. An exact quotation is not evidence that the source is relevant or true.
+- Optional extractive-contract and single-fixture prompt-injection smoke scripts remain separate from normal CI because they require a local model; they check quotation integrity and one injected sentinel, not general injection immunity.
 - The stable GitHub Actions job runs the Rust suite and both deterministic retrieval evaluators; a separate job checks the Rust 1.85 MSRV.
 
 Local sequential HTTP benchmark on 2026-09-14 (200 requests against the fixed authored corpus): p50 `0.448 ms`, p95 `0.566 ms`, max `0.675 ms`. These figures are localhost plumbing measurements, not production capacity claims.
