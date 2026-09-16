@@ -144,6 +144,11 @@ def main():
     with urllib.request.urlopen('http://127.0.0.1:11434/api/tags', timeout=5) as r:
         models = [m for m in json.load(r)['models'] if m['name'] in ('qwen2.5-coder:1.5b', 'nomic-embed-text:latest')]
     subprocess.run(['cargo', 'build', '--locked'], cwd=ROOT, check=True)
+    status_out = subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, text=True)
+    if status_out.strip():
+        print("ERROR: Working tree is dirty. Please commit before running evaluations to ensure verifiable provenance.")
+        sys.exit(1)
+
     manifest = {
         'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
         'status': subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True),

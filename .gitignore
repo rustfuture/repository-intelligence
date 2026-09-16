@@ -1,3 +1,4 @@
 /target/
 .repository-intelligence/
 __pycache__/
+/audit/
