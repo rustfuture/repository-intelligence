@@ -118,8 +118,8 @@ Qwen and Nomic digests, corpus, questions and source hashes are recorded in the 
 | False selection on unanswerable questions | 5 |
 
 Derived from the same raw records: **12 false accepts** (5 irrelevant + 2 partial + 5
-selections on unanswerable questions) and **2 false rejects**. These are the numbers the
-old single "refusal accuracy" figure hid.
+selections on unanswerable questions) and **2 false rejects**. An earlier aggregate
+refusal figure did not separate these outcomes.
 
 All accepted excerpts matched their source text in this run — that is quotation integrity,
 **not** answer correctness. Source-overlap scoring uses frozen expected spans and does not
