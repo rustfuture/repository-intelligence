@@ -1,0 +1,20 @@
+{
+  "total": 42,
+  "answerable": 30,
+  "unanswerable": 12,
+  "model_called": 41,
+  "pre_model_refusals": 1,
+  "provider_errors": 0,
+  "false_accepts": 12,
+  "false_rejects": 2,
+  "counts": {
+    "expected_source_covered": 21,
+    "irrelevant_selection": 5,
+    "false_refusal": 2,
+    "partial_source_coverage": 2,
+    "false_selection": 5,
+    "correct_refusal": 7
+  },
+  "semantic_correctness": "not automatically judged; inspect selected excerpts and question rationale",
+  "scoring_rule": "a question counts as expected_source_covered only when the decision is accepted, the quoted text matches the cited range exactly, all selected spans are relevant to the question, and every expected source span is covered"
+}
