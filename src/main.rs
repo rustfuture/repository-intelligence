@@ -231,7 +231,7 @@ fn evidence_json(evidence: &[repository_intelligence::Evidence]) -> String {
     format!("[{items}]")
 }
 
-fn claims_json(assessment: &repository_intelligence::citation::AnswerAssessment) -> String {
+fn claims_json(assessment: &repository_intelligence::extractive::AnswerAssessment) -> String {
     let items = assessment
         .claims
         .iter()
@@ -260,7 +260,7 @@ fn answer_json(
     commit: &str,
     answer: &repository_intelligence::llm::LlmAnswer,
     decision: &str,
-    assessment: &repository_intelligence::citation::AnswerAssessment,
+    assessment: &repository_intelligence::extractive::AnswerAssessment,
     final_text: &str,
     evidence: &[repository_intelligence::Evidence],
 ) -> String {

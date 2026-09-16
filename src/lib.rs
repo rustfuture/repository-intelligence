@@ -1,4 +1,3 @@
-pub mod citation;
 pub mod extractive;
 pub mod llm;
 
