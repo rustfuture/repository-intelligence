@@ -81,21 +81,65 @@ def compute_metrics(questions: list[dict], rankings: list[list[str]], latencies:
 
 
 def evaluate_refusal(bin_path: Path, unanswerable: list[dict]) -> dict:
-    refusals = 0
-    env = os.environ.copy()
-    if ollama_available():
-        env["USE_OLLAMA"] = "1"
-    for q in unanswerable:
-        cmd = [str(bin_path), "--answer", str(CORPUS), q["query"]]
-        res = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, env=env)
-        if "Insufficient repository evidence to answer this question." in res.stdout:
-            refusals += 1
+    """Classify trap outcomes without conflating missing evidence with refusal.
 
-    total = len(unanswerable)
+    A ``pre_model_refusal`` means the CLI found no lexical anchor and never called
+    the model. That is a fact about the index, **not** evidence that the model or
+    the guard refuses traps. Reporting it as "refusal accuracy" was the source of
+    the earlier, misleading 12/12 claim.
+    """
+    if not ollama_available():
+        # Never fall back to an external provider from an evaluation script. If the
+        # local model is absent, the classification is skipped instead of being
+        # silently measured through a different (possibly paid) provider.
+        return {
+            "trap_count": len(unanswerable),
+            "skipped": "ollama_unavailable",
+            "note": "refusal classification requires the local Ollama model; no provider was called",
+        }
+
+    env = os.environ.copy()
+    env["USE_OLLAMA"] = "1"
+
+    pre_model_refusals = 0
+    model_refusals = 0
+    guard_rejections = 0
+    accepted_on_unanswerable = 0
+    provider_errors = 0
+
+    for q in unanswerable:
+        cmd = [str(bin_path), "--answer-json", str(CORPUS), q["query"]]
+        res = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, env=env)
+        try:
+            payload = json.loads(res.stdout)
+        except json.JSONDecodeError:
+            provider_errors += 1
+            continue
+        decision = payload.get("decision")
+        if decision == "pre_model_refusal":
+            pre_model_refusals += 1
+        elif decision == "model_error":
+            provider_errors += 1
+        elif decision == "accepted":
+            accepted_on_unanswerable += 1
+        elif "Insufficient repository evidence" in payload.get("raw_answer", ""):
+            model_refusals += 1
+        else:
+            guard_rejections += 1
+
     return {
-        "trap_count": total,
-        "refusal_count": refusals,
-        "refusal_accuracy": round(refusals / total, 4) if total else 1.0,
+        "trap_count": len(unanswerable),
+        "pre_model_refusal_count": pre_model_refusals,
+        "model_refusal_count": model_refusals,
+        "guard_rejection_count": guard_rejections,
+        "accepted_on_unanswerable_count": accepted_on_unanswerable,
+        "provider_error_count": provider_errors,
+        "note": (
+            "pre_model_refusal_count counts traps with no lexical anchor where the model was "
+            "never called; it is not model or guard refusal accuracy. "
+            "accepted_on_unanswerable_count > 0 is a false acceptance at the refusal gate. "
+            "No single refusal-accuracy number is reported."
+        ),
     }
 
 

@@ -64,6 +64,11 @@ questions and source hashes are recorded in the manifest.
 | Correct refusal on unanswerable questions | 9 |
 | False selection on unanswerable questions | 3 |
 
+Derived from the same raw records: **12 false accepts** (accepted selections that
+failed the expected-source rule: 8 irrelevant + 1 partial + 3 selections on
+unanswerable questions) and **3 false rejects** (answerable questions that were
+not accepted). Those are the numbers the old single "refusal accuracy" figure hid.
+
 All accepted excerpts matched their source text in this run. That is quotation
 integrity, **not** 100% answer correctness. Source-overlap scoring is generic and
 uses frozen expected spans; it does not establish entailment. The tiny authored
@@ -74,7 +79,15 @@ generation. No held-out tuning was performed after this run.
 Reproduce into a new directory (existing outputs are never overwritten):
 ```sh
 python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
+python3 evaluation/v3/evaluate.py --render-only evaluation/v3/my-run   # re-render from raw.jsonl, no model calls
 ```
+
+`summary.json` reports true numerators/denominators and separates `false_accepts`,
+`false_rejects`, `model_called` and `pre_model_refusals`. A pre-model refusal means
+the index had no lexical anchor and the model was never called; it is a fact about
+the index, not model or guard refusal accuracy. The trap classification in
+`evaluation/results_modes.json` is reported the same way, which is what the old
+single "12/12 refusal accuracy" number conflated.
 
 Old v1/v2 reports are historical. In particular the previous 12/12 refusal and
 universal injection-defense claims are superseded; v2's real generation sample

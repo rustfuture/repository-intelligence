@@ -1,4 +1,4 @@
-use repository_intelligence::{EmbeddingProvider, Index};
+use repository_intelligence::{EmbeddingProvider, Index, RetrievalMode};
 use std::{
     fs,
     io::Write,
@@ -664,4 +664,44 @@ fn answer_command_rejects_irrelevant_citation_even_if_span_exists() {
         "Irrelevant citation must be refused even if span exists in evidence: {}",
         stdout
     );
+}
+
+#[test]
+fn evidence_text_matches_its_declared_line_span() {
+    // Quotation integrity: the extractive path renders `item.text` verbatim and
+    // claims it is the cited `path:start-end`. If a chunk's stored text ever
+    // drifts from its declared span, the CLI would print a citation that does not
+    // match the file. This asserts the invariant directly.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("evaluation/corpus");
+    let index = Index::build(&root).expect("build corpus index");
+    let queries = [
+        "reload endpoint git diff",
+        "authored retrieval corpus",
+        "minimum token length",
+        "symlink traversal",
+        "index header dimension",
+        "reciprocal rank fusion",
+    ];
+    let mut checked = 0;
+    for query in queries {
+        for item in index.search_evidence(query, 10, RetrievalMode::Hybrid) {
+            let path = root.join(&item.path);
+            let file = fs::read_to_string(&path).expect("read evidence file");
+            let lines: Vec<&str> = file.lines().collect();
+            assert!(
+                item.start_line >= 1 && item.end_line <= lines.len(),
+                "span out of range for {}",
+                item.citation()
+            );
+            let declared = lines[item.start_line - 1..item.end_line].join("\n");
+            assert_eq!(
+                declared.trim(),
+                item.text.trim(),
+                "stored text does not match the declared span for {}",
+                item.citation()
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "expected at least one evidence item");
 }

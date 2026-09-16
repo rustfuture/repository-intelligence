@@ -1,5 +1,13 @@
 # Repository Intelligence Evaluation v2 Report
 
+> **HISTORICAL / SUPERSEDED.** This is a frozen v2 output, kept as evidence. Its
+> sample covered only 10 questions (6 answerable, 4 traps) while repository-level
+> text claimed a 12/12 trap-refusal rate from a different check, and its
+> "claim support" was decided by question-ID keyword checks rather than an
+> independent correctness judgement. The current evaluation is
+> [`evaluation/v3`](../v3/README.md); do not pool these numbers. See
+> [`README.md`](README.md) in this directory.
+
 **Generated**: 2026-09-15T22:44:06Z
 **Dataset**: 52 questions total (10 dev, 42 held-out, including 12 unanswerable traps).
 
