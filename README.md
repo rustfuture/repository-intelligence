@@ -1,9 +1,7 @@
+<h1 align="center">Repository Intelligence</h1>
 <p align="center">
-  <h1 align="center">Repository Intelligence</h1>
-  <p align="center">
-    Evidence-first repository retrieval in Rust — local lexical, neural and hybrid search
-    with an inspectable extractive answer contract.
-  </p>
+  Evidence-first repository retrieval in Rust — local lexical, neural and hybrid search
+  with an inspectable extractive answer contract.
 </p>
 
 <p align="center">
