@@ -39,9 +39,6 @@ and the local model can make false selections or refuse useful sources. The UI
 labels output as source excerpts, not verified factual answers. No shell/tool
 execution is granted to the answering model.
 
-The older heuristic citation functions remain experimental library APIs for
-compatibility with the unfinished work; the CLI does not use them as an
-entailment verifier. XML delimiters are not a security boundary.
 
 ## Run
 
@@ -87,23 +84,23 @@ a dirty label alone is not an immutable snapshot identifier.
 
 ## Current measured results
 
-[Full v3 regression record](evaluation/v3/run-01/report.md):
+[Full v3 regression record](evaluation/v3/run-03/report.md):
 42 previously exposed held-out questions, 30 answerable and 12 unanswerable;
 41 model calls and 1 pre-model refusal. Local Qwen and Nomic digests, corpus,
 questions and source hashes are recorded in the manifest.
 
 | Outcome | Count |
 |---|---:|
-| Expected source fully covered | 18 |
-| Irrelevant selection | 8 |
-| Partial source coverage | 1 |
-| False refusal | 3 |
-| Correct refusal on unanswerable questions | 9 |
-| False selection on unanswerable questions | 3 |
+| Expected source fully covered | 21 |
+| Irrelevant selection | 5 |
+| Partial source coverage | 2 |
+| False refusal | 2 |
+| Correct refusal on unanswerable questions | 7 |
+| False selection on unanswerable questions | 5 |
 
 Derived from the same raw records: **12 false accepts** (accepted selections that
-failed the expected-source rule: 8 irrelevant + 1 partial + 3 selections on
-unanswerable questions) and **3 false rejects** (answerable questions that were
+failed the expected-source rule: 5 irrelevant + 2 partial + 5 selections on
+unanswerable questions) and **2 false rejects** (answerable questions that were
 not accepted). Those are the numbers the old single "refusal accuracy" figure hid.
 
 All accepted excerpts matched their source text in this run. That is quotation
