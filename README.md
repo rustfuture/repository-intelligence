@@ -8,12 +8,12 @@ You can run this project locally using Ollama (`qwen2.5-coder:1.5b` and `nomic-e
 **1. Index a repository:**
 ```bash
 # This scans the repo and builds the lexical/vector index
-cargo run -- index /path/to/your/repo
+cargo run -- --index /path/to/your/repo
 ```
 
 **2. Ask a question (Extractive RAG):**
 ```bash
-cargo run -- search "Where is the authentication logic?"
+cargo run -- --semantic /path/to/your/repo "Where is the authentication logic?"
 ```
 *The model will return exact code citations (e.g., `[E4] src/auth.rs`) rather than hallucinating code!*
 
@@ -161,5 +161,5 @@ MIT. The evaluation corpus is authored for this project.
 This project demonstrates a production-grade, evidence-first approach to Applied LLM engineering in Rust:
 - **Strict Extractive Protocol**: Answers are enforced as exact evidence citations rather than generated prose, eliminating a major class of hallucinations.
 - **Pristine Provenance**: Evaluation runs are strictly tied to clean git commits (the `v3` evaluation explicitly verifies a clean working tree to guarantee reproducibility).
-- **Rigorously Tested**: Supported by 57 Rust tests (including integration tests for dirty snapshot restoration edge cases) and 4 Python evaluator tests, passing cleanly in CI.
+- **Rigorously Tested**: Supported by 37 Rust tests (including integration tests for dirty snapshot restoration edge cases) and 4 Python evaluator tests, passing cleanly in CI.
 - **Local Model Integration**: Integrates with local Ollama models (`qwen2.5-coder:1.5b`, `nomic-embed-text`) to perform semantic RRF and citation generation with sub-millisecond p50 HTTP latency overheads.
