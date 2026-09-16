@@ -11,13 +11,24 @@ You can run this project locally using Ollama (`qwen2.5-coder:1.5b` and `nomic-e
 cargo run -- --index /path/to/your/repo
 ```
 
-**2. Ask a question (Extractive RAG):**
+**2. Retrieve evidence (no model call):**
 ```bash
+# Lexical/vector/hybrid retrieval over the repository, printed as cited excerpts
 cargo run -- --semantic /path/to/your/repo "Where is the authentication logic?"
+cargo run -- --hybrid   /path/to/your/repo "Where is the authentication logic?"
 ```
-*The model will return exact code citations (e.g., `[E4] src/auth.rs`) rather than hallucinating code!*
 
-**3. Run the Evaluation Suite:**
+**3. Ask a question (Extractive RAG):**
+```bash
+# Requires a local provider. With a running Ollama daemon and the models above:
+#   USE_OLLAMA=1 cargo run -- --answer /path/to/your/repo "Where is the authentication logic?"
+# Without USE_OLLAMA=1 the existing AGY adapter is used instead.
+# The model returns evidence IDs only (e.g. `[E4]`); the application renders the
+# original source text with file/line references instead of generated prose.
+USE_OLLAMA=1 cargo run -- --answer /path/to/your/repo "Where is the authentication logic?"
+```
+
+**4. Run the Evaluation Suite:**
 ```bash
 python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
 ```
@@ -161,5 +172,5 @@ MIT. The evaluation corpus is authored for this project.
 This project demonstrates a production-grade, evidence-first approach to Applied LLM engineering in Rust:
 - **Strict Extractive Protocol**: Answers are enforced as exact evidence citations rather than generated prose, eliminating a major class of hallucinations.
 - **Pristine Provenance**: Evaluation runs are strictly tied to clean git commits (the `v3` evaluation explicitly verifies a clean working tree to guarantee reproducibility).
-- **Rigorously Tested**: Supported by 37 Rust tests (including integration tests for dirty snapshot restoration edge cases) and 4 Python evaluator tests, passing cleanly in CI.
+- **Rigorously Tested**: Supported by 37 Rust tests (including integration tests for dirty snapshot restoration edge cases) and 5 Python evaluator tests, passing cleanly in CI.
 - **Local Model Integration**: Integrates with local Ollama models (`qwen2.5-coder:1.5b`, `nomic-embed-text`) to perform semantic RRF and citation generation with sub-millisecond p50 HTTP latency overheads.
