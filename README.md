@@ -1,5 +1,27 @@
 # Repository Intelligence
 
+
+## How to Use (Usage Guide)
+
+You can run this project locally using Ollama (`qwen2.5-coder:1.5b` and `nomic-embed-text`).
+
+**1. Index a repository:**
+```bash
+# This scans the repo and builds the lexical/vector index
+cargo run -- index /path/to/your/repo
+```
+
+**2. Ask a question (Extractive RAG):**
+```bash
+cargo run -- search "Where is the authentication logic?"
+```
+*The model will return exact code citations (e.g., `[E4] src/auth.rs`) rather than hallucinating code!*
+
+**3. Run the Evaluation Suite:**
+```bash
+python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
+```
+
 A local Rust repository index with lexical, neural and hybrid retrieval, source
 line references, incremental updates, and model-assisted **source selection**.
 
