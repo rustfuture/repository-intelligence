@@ -1,132 +1,123 @@
 # Repository Intelligence
 
-Repository Intelligence is a local Rust service that turns a Git repository into citable evidence: it scans source and documentation, creates code-aware chunks, supports lexical and vector retrieval, fuses both rankings, and supplies grounded context to an optional LLM answer provider.
+A local Rust repository index with lexical, neural and hybrid retrieval, source
+line references, incremental updates, and model-assisted **source selection**.
 
-It is deliberately a small, inspectable system rather than a collection of opaque AI calls.
+## Answer contract
 
-## Why it exists
+`--answer` and `--answer-json` use extractive-selection-v1. The model returns
+only evidence IDs. The application validates every ID and renders the original
+source text with file/line references. Extra prose, invalid IDs and mixed
+valid/invalid output are refused atomically.
 
-Repository questions are easy to answer incorrectly when a model guesses from a partial checkout. This project keeps the retrieval path deterministic and observable. Every source-search result carries a repository-relative path and line span, and an answer is refused when the repository has no lexical anchor for the question.
+This deliberately replaces free-form answers approved by word-overlap heuristics.
+**An exact quotation is not proof that a source is true or answers the question.**
+Selections may be irrelevant, malicious repository text may be quoted as data,
+and the local model can make false selections or refuse useful sources. The UI
+labels output as source excerpts, not verified factual answers. No shell/tool
+execution is granted to the answering model.
+
+The older heuristic citation functions remain experimental library APIs for
+compatibility with the unfinished work; the CLI does not use them as an
+entailment verifier. XML delimiters are not a security boundary.
+
+## Run
+
+Requires Rust 1.85+; local neural inference requires an already installed Ollama
+daemon, `nomic-embed-text`, and `qwen2.5-coder:1.5b`.
+
+```sh
+cargo build --locked
+cargo run --locked -- evaluation/corpus "reload"
+cargo run --locked -- --embedding nomic --semantic evaluation/corpus "index header"
+USE_OLLAMA=1 cargo run --locked -- --embedding nomic --answer-json evaluation/corpus "What static string does reload return in api.rs?"
+```
+
+Default retrieval uses deterministic HashEmbedding (not a learned model).
+`RI_EMBEDDING_PROVIDER=nomic` selects local neural embeddings.
+`USE_OLLAMA=1` selects Ollama; without it the existing AGY adapter is used.
+No automatic hash fallback is claimed when a selected neural provider fails.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    A[Git repository] --> B[Safe scanner]
-    B --> C[Code-aware chunker]
-    C --> D[In-memory index\noptional RI_INDEX_V1 snapshot]
-    D --> E[Lexical inverted index]
-    D --> F[Vector index\nHashEmbedding baseline]
-    E --> G[Hybrid ranker\nRRF k=60]
-    F --> G
-    G --> H[Evidence builder\npath:line span]
-    H --> I[Optional AGY/Ollama answer]
+Files → filtered scanner → code chunks and line spans → lexical/vector index →
+hybrid evidence → model selects IDs → application renders source quotations.
+
+The local HTTP service exposes `/health`, `/search?q=...`, `/commits?q=...`
+and `/reload`. It has no TLS/auth/multi-tenant isolation. Bind to loopback.
+Git synchronization handles changed/deleted files and marks dirty worktrees;
+a dirty label alone is not an immutable snapshot identifier.
+
+## Current measured results
+
+[Full v3 regression record](evaluation/v3/run-01/report.md):
+42 previously exposed held-out questions, 30 answerable and 12 unanswerable;
+41 model calls and 1 pre-model refusal. Local Qwen and Nomic digests, corpus,
+questions and source hashes are recorded in the manifest.
+
+| Outcome | Count |
+|---|---:|
+| Expected source fully covered | 18 |
+| Irrelevant selection | 8 |
+| Partial source coverage | 1 |
+| False refusal | 3 |
+| Correct refusal on unanswerable questions | 9 |
+| False selection on unanswerable questions | 3 |
+
+Derived from the same raw records: **12 false accepts** (accepted selections that
+failed the expected-source rule: 8 irrelevant + 1 partial + 3 selections on
+unanswerable questions) and **3 false rejects** (answerable questions that were
+not accepted). Those are the numbers the old single "refusal accuracy" figure hid.
+
+All accepted excerpts matched their source text in this run. That is quotation
+integrity, **not** 100% answer correctness. Source-overlap scoring is generic and
+uses frozen expected spans; it does not establish entailment. The tiny authored
+corpus and previously exposed questions are regression evidence, not an unseen
+generalization benchmark. Latency includes process startup, index rebuild and
+generation. No held-out tuning was performed after this run.
+
+Reproduce into a new directory (existing outputs are never overwritten):
+```sh
+python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
+python3 evaluation/v3/evaluate.py --render-only evaluation/v3/my-run   # re-render from raw.jsonl, no model calls
 ```
 
-The library keeps the embedding provider behind the `EmbeddingProvider` trait. The checked-in provider (`HashEmbedding`) is a deterministic offline vector baseline; it has no model download, network call, or vendor lock-in. A learned local or hosted provider can be supplied through the same trait without changing indexing or ranking code.
+`summary.json` reports true numerators/denominators and separates `false_accepts`,
+`false_rejects`, `model_called` and `pre_model_refusals`. A pre-model refusal means
+the index had no lexical anchor and the model was never called; it is a fact about
+the index, not model or guard refusal accuracy. The trap classification in
+`evaluation/results_modes.json` is reported the same way, which is what the old
+single "12/12 refusal accuracy" number conflated.
 
-## Quick start
+Old v1/v2 reports are historical. In particular the previous 12/12 refusal and
+universal injection-defense claims are superseded; v2's real generation sample
+contained only four traps. Retrieval and generation metrics must not be pooled.
 
-```bash
-cargo test --locked
-cargo run --locked -- . "bounded worker"
-cargo run --locked -- --semantic . "incremental indexing"
-cargo run --locked -- --hybrid . "what does reload do"
-cargo run --locked -- --commits . "authentication"
-cargo run --locked -- --analytics .
-```
+## Verification
 
-The default command is the compatibility lexical baseline and prints `path:line<TAB>source`. Semantic and hybrid commands print `path:line[-end]<TAB>score<TAB>source`.
-
-Create a reusable on-disk index when a repository is large or queried repeatedly:
-
-```bash
-cargo run --locked -- --index /path/to/repository /tmp/repository-intelligence.index
-cargo run --locked -- --load-index /tmp/repository-intelligence.index "incremental indexing"
-```
-
-The format stores source text, a revision marker, and recent commit metadata, uses hex-encoded fields, and recomputes vectors through the configured provider on load. It stores repository-relative paths and adds no credentials or absolute-path metadata; source files should still be treated as potentially sensitive.
-
-## Grounded answers
-
-With the authenticated `agy` CLI:
-
-```bash
-cargo run --locked -- --answer . "What does the reload endpoint do?"
-```
-
-The command builds hybrid evidence, sends only that evidence to the provider, records model/duration metadata, and screens returned `path:line` citations against the retrieved spans. If no lexical evidence exists it prints:
-
-```text
-Insufficient repository evidence to answer this question.
-```
-
-`USE_OLLAMA=1 OLLAMA_MODEL=llama3` selects the local Ollama provider. Providers receive repository content as untrusted data; source-file instructions are never treated as system instructions.
-
-## Local HTTP API
-
-```bash
-cargo run --locked -- --serve 127.0.0.1:8080 .
-curl http://127.0.0.1:8080/health
-curl 'http://127.0.0.1:8080/search?q=incremental+indexing'
-curl 'http://127.0.0.1:8080/commits?q=authentication'
-curl http://127.0.0.1:8080/reload
-```
-
-`/search` returns hybrid evidence with `path`, `start_line`, `end_line`, `score`, `source`, `kind`, and text, plus the indexed commit. `/commits` searches the last 100 commit subjects and dates, enabling lightweight commit-aware questions. `/reload` applies Git added/modified/deleted/renamed paths; a dirty worktree is refreshed by file hash. This is a local development API: authentication, TLS, rate limiting, and multi-tenant isolation are not implemented.
-
-## Incremental indexing and safety
-
-- Full scans skip Git/build/dependency directories, binary extensions, symlinks, and common credential/key names.
-- Each file has a stable content hash. `sync_worktree` hashes eligible files, re-indexes only changed/new files, and removes deleted files.
-- `sync_git` understands add, modify, delete, copy, type-change, and rename statuses; it falls back to a worktree refresh when Git history is unavailable.
-- The last 100 commit IDs, dates, and subjects are retained as metadata and can be searched independently; this is not a full historical blob index.
-- Chunks preserve file, function/struct/class/trait/impl declarations when a lightweight parser can identify them; 40-line generic chunks are the fallback.
-- Absolute paths, parent traversal, symlink components, and sensitive file names are rejected for incremental updates.
-
-Sensitive-name matching is ASCII case-insensitive (for example `CREDENTIALS.JSON` cannot bypass the policy). These checks reduce accidental leakage; they are not a substitute for a secret scanner or an adversarial filesystem boundary.
-
-## Evaluation
-
-The fixed authored corpus in `evaluation/corpus/` and questions in `evaluation/questions.json` are a regression suite, not a general quality claim.
-
-```bash
-python3 evaluation/evaluate.py
-python3 evaluation/evaluate_modes.py
-```
-
-The separate `evaluation/evaluate_hybrid.py` experiment compares local Ollama `nomic-embed-text` embeddings with the product modes. It requires a running Ollama service and is intentionally not part of CI.
-
-The current run on 20 file-level questions produced:
-
-| mode | Hit/Recall@5 | MRR |
-| --- | ---: | ---: |
-| lexical | 1.00 | 1.0000 |
-| semantic (`hash-token-v1`) | 1.00 | 0.9375 |
-| hybrid (RRF, `k=60`) | 1.00 | 1.0000 |
-
-The corpus is authored to test plumbing and determinism. It does not establish retrieval quality on arbitrary repositories, and the hashed vector baseline is not a trained language embedding model.
-
-## Tests and development checks
-
-```bash
+```sh
 cargo fmt --check
 cargo check --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
-./scripts/validate.sh
+python3 -m unittest discover -s evaluation/v3 -p 'test_*.py'
 ```
 
-The Rust suite covers line retrieval, code-aware evidence, semantic/hybrid ranking, persistence round trips, Git synchronization, file removal, unanswerable questions, and sensitive-file policy consistency. Optional AGY and prompt-injection smoke tests are kept separate from normal CI because they require an external model CLI.
+Offline tests cover valid selections as well as malformed IDs, mixed selections,
+uncited prose, altered numbers, negation, reversed relations and added claims.
+They enforce the extractive protocol, not general natural-language reasoning.
 
-## Current limitations and roadmap
+## Design references
 
-- `HashEmbedding` is an offline vector baseline. A learned embedding provider and a benchmark on a larger, independently held-out corpus are the next retrieval milestone.
-- The lightweight declaration parser is intentionally conservative; language-specific AST chunkers are not yet bundled.
-- Commit metadata search is limited to the last 100 commit IDs, dates, and subjects; historical file-level blame and full commit-blob retrieval are not included.
-- The HTTP server is single-threaded and local-only.
-- LLM answer quality and citation support require a provider-specific evaluation; retrieval metrics alone do not prove grounded generation.
+- [ALCE (EMNLP 2023)](https://aclanthology.org/2023.emnlp-main.398/):
+  citation presence and support are different evaluation dimensions.
+- [Anthropic long-context experiments](https://www.anthropic.com/news/prompting-long-context):
+  quote extraction can make source use more inspectable.
+
+A further synthesis layer would need its own evaluation. Adding a larger model
+or an NLI judge does not by itself guarantee correctness.
 
 ## License
 
-MIT. The evaluation corpus is authored for this project and contains no private repository content.
+MIT. The evaluation corpus is authored for this project.
+

@@ -1,0 +1,87 @@
+{
+  "evaluation_version": "v2",
+  "timestamp": "2026-09-15T22:44:06Z",
+  "corpus_manifest": {
+    "README.md": "2984d9c83f0897acc822e99c6c2acf900a1490477d89e4ef46136d38921e546c",
+    "api.rs": "e78fcfb30f10e3dd82f1856980e4aa41341776ff1444124fbb78b55bc6b5ee1b",
+    "indexing.rs": "60f8e40d976abfd615b57ab2905b6b13cc5cb128027c7e40f93c538869620d80",
+    "retrieval.rs": "5c52e6006a7807b5ac621ee8a1b388adcc26e74d7f6d4bae77c42bdee9179d81",
+    "security.rs": "2d33b96a30120375830ba2ba639efcd3fda085e0b62706c9c6a152b8b68fafb0",
+    "storage.rs": "785895fd381dd719440e679c6d56550fef48838fac6f3176650559b104d38a09",
+    "untrusted.md": "46beab23bcebf3b056c70fc7c123fa6b4ea5bc72bc3f0f5735cd744ff8a948aa"
+  },
+  "questions_count": 52,
+  "dev_questions": 10,
+  "heldout_questions": 42,
+  "heldout_traps": 12,
+  "retrieval_modes": {
+    "lexical": {
+      "answerable_questions": 38,
+      "file_recall_at_1": 0.7895,
+      "file_recall_at_3": 1.0,
+      "file_recall_at_5": 1.0,
+      "file_mrr": 0.8772,
+      "span_recall_at_1": 0.6053,
+      "span_recall_at_3": 0.9211,
+      "span_recall_at_5": 0.9737,
+      "span_mrr": 0.7531,
+      "heldout_span_mrr": 0.7594,
+      "total_traps": 14,
+      "latency_p50_ms": 68,
+      "latency_p95_ms": 73
+    },
+    "hash_baseline": {
+      "answerable_questions": 38,
+      "file_recall_at_1": 0.6842,
+      "file_recall_at_3": 0.9211,
+      "file_recall_at_5": 0.9474,
+      "file_mrr": 0.8048,
+      "span_recall_at_1": 0.4474,
+      "span_recall_at_3": 0.7895,
+      "span_recall_at_5": 0.8947,
+      "span_mrr": 0.6303,
+      "heldout_span_mrr": 0.6361,
+      "total_traps": 14,
+      "latency_p50_ms": 67,
+      "latency_p95_ms": 70
+    },
+    "neural_nomic": {
+      "answerable_questions": 38,
+      "file_recall_at_1": 0.9737,
+      "file_recall_at_3": 1.0,
+      "file_recall_at_5": 1.0,
+      "file_mrr": 0.9868,
+      "span_recall_at_1": 0.9211,
+      "span_recall_at_3": 0.9737,
+      "span_recall_at_5": 1.0,
+      "span_mrr": 0.9496,
+      "heldout_span_mrr": 0.9361,
+      "total_traps": 14,
+      "latency_p50_ms": 412,
+      "latency_p95_ms": 485
+    },
+    "hybrid_nomic": {
+      "answerable_questions": 38,
+      "file_recall_at_1": 0.8684,
+      "file_recall_at_3": 1.0,
+      "file_recall_at_5": 1.0,
+      "file_mrr": 0.9342,
+      "span_recall_at_1": 0.7632,
+      "span_recall_at_3": 1.0,
+      "span_recall_at_5": 1.0,
+      "span_mrr": 0.8816,
+      "heldout_span_mrr": 0.8667,
+      "total_traps": 14,
+      "latency_p50_ms": 429,
+      "latency_p95_ms": 493
+    }
+  },
+  "llm_evaluation": {
+    "sample_size": 10,
+    "sample_answerable": 6,
+    "sample_traps": 4,
+    "claim_supported": 4,
+    "exact_refusals": 4,
+    "hallucinated_or_false_answers": 0
+  }
+}

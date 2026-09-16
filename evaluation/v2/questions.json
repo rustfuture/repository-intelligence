@@ -1,0 +1,1104 @@
+[
+  {
+    "id": "DEV-01",
+    "split": "dev",
+    "category": "retrieval",
+    "question": "How does the tokenizer filter query tokens?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 2,
+        "end_line": 8
+      }
+    ],
+    "rationale": "tokenize_query splits on non-alphanumeric characters, filters for length >= 2, and converts to lowercase."
+  },
+  {
+    "id": "DEV-02",
+    "split": "dev",
+    "category": "retrieval",
+    "question": "What is the formula for cosine similarity between two vector slices?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 10,
+        "end_line": 19
+      }
+    ],
+    "rationale": "cosine_similarity calculates dot product divided by the product of L2 norms when norms are positive."
+  },
+  {
+    "id": "DEV-03",
+    "split": "dev",
+    "category": "retrieval",
+    "question": "How does reciprocal rank fusion combine rank scores?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 21,
+        "end_line": 25
+      }
+    ],
+    "rationale": "reciprocal_rank_fusion sums 1.0 / (k + rank + 1.0) across lexical and semantic ranks."
+  },
+  {
+    "id": "DEV-04",
+    "split": "dev",
+    "category": "security",
+    "question": "What checks does validate_relative_path perform?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 2,
+        "end_line": 4
+      }
+    ],
+    "rationale": "Checks that the path does not start with '/', does not contain '..', and is not empty."
+  },
+  {
+    "id": "DEV-05",
+    "split": "dev",
+    "category": "security",
+    "question": "Which file extensions and names are filtered as sensitive files?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 10,
+        "end_line": 13
+      }
+    ],
+    "rationale": "filter_sensitive_file checks for .key, .pem extensions and credentials.json."
+  },
+  {
+    "id": "DEV-06",
+    "split": "dev",
+    "category": "storage",
+    "question": "How is an index serialized into version 1 format?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 2,
+        "end_line": 4
+      }
+    ],
+    "rationale": "serialize_index_v1 writes header RI_INDEX_V1 followed by revision, provider, and dimension lines."
+  },
+  {
+    "id": "DEV-07",
+    "split": "dev",
+    "category": "storage",
+    "question": "What does verify_dimension_compatibility check?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 17,
+        "end_line": 19
+      }
+    ],
+    "rationale": "Checks whether stored_dim equals runtime_dim."
+  },
+  {
+    "id": "DEV-08",
+    "split": "dev",
+    "category": "indexing",
+    "question": "What function handles incremental file updates?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "indexing.rs",
+        "start_line": 2,
+        "end_line": 2
+      }
+    ],
+    "rationale": "update_changed_file performs incremental refresh."
+  },
+  {
+    "id": "DEV-09",
+    "split": "dev",
+    "category": "trap",
+    "question": "How is AES-256 encryption applied to the index file?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not implement AES-256 encryption."
+  },
+  {
+    "id": "DEV-10",
+    "split": "dev",
+    "category": "trap",
+    "question": "Where is the PostgreSQL connection pool configured?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not contain database connection pools."
+  },
+  {
+    "id": "HELD-01",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "What minimum token length is enforced during query tokenization?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 2,
+        "end_line": 8
+      }
+    ],
+    "rationale": "tokenize_query filters tokens with length >= 2.",
+    "expected_answer": {
+      "must_include": [
+        "2"
+      ],
+      "any_of": [
+        [
+          "token",
+          "length"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-02",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "How does tokenize_query handle non-alphanumeric characters?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 2,
+        "end_line": 8
+      }
+    ],
+    "rationale": "It splits on any character where !c.is_ascii_alphanumeric().",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "split"
+        ],
+        [
+          "alphanumeric"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-03",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "What value does cosine_similarity return if either vector has zero magnitude?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 10,
+        "end_line": 19
+      }
+    ],
+    "rationale": "If either norm is <= 0.0, cosine_similarity returns 0.0.",
+    "expected_answer": {
+      "must_include": [
+        "0"
+      ],
+      "any_of": [
+        [
+          "zero",
+          "magnitude",
+          "norm"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-04",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "Does cosine_similarity compute dot products between vectors?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 10,
+        "end_line": 19
+      }
+    ],
+    "rationale": "Yes, it computes dot product as sum of a * b.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "dot"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-05",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "What parameter k is used to damp low ranks in reciprocal rank fusion?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 21,
+        "end_line": 25
+      }
+    ],
+    "rationale": "reciprocal_rank_fusion takes a parameter k: f32 used as 1.0 / (k + rank + 1.0).",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "k"
+        ],
+        [
+          "rank"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-06",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "How are lexical and semantic reciprocal ranks combined into a final score?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 21,
+        "end_line": 25
+      }
+    ],
+    "rationale": "By adding score_lex and score_sem together.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "add",
+          "sum",
+          "combine",
+          "combines",
+          "combined"
+        ],
+        [
+          "score_lex",
+          "score_sem",
+          "lexical",
+          "semantic"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-07",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "Where is the lexical anchor inserted if missing from the candidate list?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 27,
+        "end_line": 31
+      }
+    ],
+    "rationale": "anchor_lexical_hit inserts anchor at index 0 (top of candidate list).",
+    "expected_answer": {
+      "must_include": [
+        "0"
+      ],
+      "any_of": [
+        [
+          "insert",
+          "index",
+          "top",
+          "first",
+          "front"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-08",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "What does anchor_lexical_hit do when the anchor already exists in candidates?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 27,
+        "end_line": 31
+      }
+    ],
+    "rationale": "It leaves the candidates list unchanged if candidates.contains(&anchor).",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "unchanged",
+          "no change",
+          "already",
+          "contains",
+          "does not"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-09",
+    "split": "heldout",
+    "category": "security",
+    "question": "Does validate_relative_path forbid paths that begin with a slash?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 2,
+        "end_line": 4
+      }
+    ],
+    "rationale": "Yes, !path.starts_with('/') explicitly forbids leading slashes.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "slash"
+        ],
+        [
+          "starts_with",
+          "starts with",
+          "forbid",
+          "reject",
+          "not"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-10",
+    "split": "heldout",
+    "category": "security",
+    "question": "How does the path sanitizer detect directory traversal attempts?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 2,
+        "end_line": 4
+      }
+    ],
+    "rationale": "It checks !path.contains('..').",
+    "expected_answer": {
+      "must_include": [
+        ".."
+      ],
+      "any_of": [
+        [
+          "contains",
+          "traversal"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-11",
+    "split": "heldout",
+    "category": "security",
+    "question": "What boolean output indicates that a symlink traversal was blocked?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 6,
+        "end_line": 8
+      }
+    ],
+    "rationale": "block_symlink_traversal returns !is_symlink (false when is_symlink is true).",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "false"
+        ],
+        [
+          "is_symlink",
+          "symlink"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-12",
+    "split": "heldout",
+    "category": "security",
+    "question": "Which specific file name without extension is blocked by filter_sensitive_file?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 10,
+        "end_line": 13
+      }
+    ],
+    "rationale": "credentials.json is explicitly checked by name.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "credentials.json",
+          "credentials"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-13",
+    "split": "heldout",
+    "category": "security",
+    "question": "Are private certificate files (.pem) filtered out during security scanning?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 10,
+        "end_line": 13
+      }
+    ],
+    "rationale": "Yes, lower.ends_with('.pem') returns true for filtering.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "pem"
+        ],
+        [
+          "filter",
+          "ends_with",
+          "ends with",
+          "yes"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-14",
+    "split": "heldout",
+    "category": "security",
+    "question": "How does sanitize_prompt_evidence wrap untrusted repository text?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 15,
+        "end_line": 17
+      }
+    ],
+    "rationale": "It wraps text with <repository_evidence> and </repository_evidence> tags.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "repository_evidence"
+        ],
+        [
+          "wrap",
+          "tag",
+          "<"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-15",
+    "split": "heldout",
+    "category": "storage",
+    "question": "What header string indicates an index serialized in version 1 format?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 2,
+        "end_line": 4
+      }
+    ],
+    "rationale": "serialize_index_v1 starts with RI_INDEX_V1.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "ri_index_v1"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-16",
+    "split": "heldout",
+    "category": "storage",
+    "question": "What default dimension is returned when deserializing index v1?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 6,
+        "end_line": 11
+      }
+    ],
+    "rationale": "deserialize_index_v1 returns 128 as dimension.",
+    "expected_answer": {
+      "must_include": [
+        "128"
+      ],
+      "any_of": [
+        [
+          "dimension"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-17",
+    "split": "heldout",
+    "category": "storage",
+    "question": "What error message is produced if the index magic header is invalid?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 6,
+        "end_line": 11
+      }
+    ],
+    "rationale": "It returns Err('invalid magic header').",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "invalid magic header",
+          "magic header",
+          "invalid"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-18",
+    "split": "heldout",
+    "category": "storage",
+    "question": "How are binary payloads formatted by hex_encode_payload?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 13,
+        "end_line": 15
+      }
+    ],
+    "rationale": "Formats each byte as 2-character hexadecimal ({b:02x}).",
+    "expected_answer": {
+      "must_include": [
+        "2"
+      ],
+      "any_of": [
+        [
+          "hex",
+          "hexadecimal",
+          "02x"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-19",
+    "split": "heldout",
+    "category": "storage",
+    "question": "Under what condition does verify_dimension_compatibility return true?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 17,
+        "end_line": 19
+      }
+    ],
+    "rationale": "Returns true when stored_dim == runtime_dim.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "stored_dim",
+          "runtime_dim",
+          "equal",
+          "same",
+          "=="
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-20",
+    "split": "heldout",
+    "category": "indexing",
+    "question": "What function performs a full line-preserving rebuild of the index?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "indexing.rs",
+        "start_line": 1,
+        "end_line": 1
+      }
+    ],
+    "rationale": "rebuild_index performs a line-preserving source scan.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "rebuild_index"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-21",
+    "split": "heldout",
+    "category": "indexing",
+    "question": "How are deleted files removed so that stale terms disappear?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "indexing.rs",
+        "start_line": 3,
+        "end_line": 3
+      }
+    ],
+    "rationale": "remove_deleted_file ensures stale terms disappear.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "remove_deleted_file"
+        ],
+        [
+          "stale"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-22",
+    "split": "heldout",
+    "category": "api",
+    "question": "What does the health check endpoint return?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "api.rs",
+        "start_line": 1,
+        "end_line": 1
+      }
+    ],
+    "rationale": "health() returns 'status ok'.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "status ok"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-23",
+    "split": "heldout",
+    "category": "api",
+    "question": "What information format is returned by search in api.rs?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "api.rs",
+        "start_line": 2,
+        "end_line": 2
+      }
+    ],
+    "rationale": "search() returns 'path line score source text'.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "path"
+        ],
+        [
+          "score"
+        ],
+        [
+          "source"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-24",
+    "split": "heldout",
+    "category": "api",
+    "question": "What static string does reload return in api.rs?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "api.rs",
+        "start_line": 3,
+        "end_line": 3
+      }
+    ],
+    "rationale": "reload() returns 'reloaded commit'.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "reloaded commit"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-25",
+    "split": "heldout",
+    "category": "corpus",
+    "question": "What is the purpose of the authored retrieval corpus according to README.md?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "README.md",
+        "start_line": 1,
+        "end_line": 4
+      }
+    ],
+    "rationale": "Authored solely for deterministic retrieval measurements with no private content.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "deterministic",
+          "retrieval"
+        ],
+        [
+          "private"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-26",
+    "split": "heldout",
+    "category": "corpus",
+    "question": "Does the index preserve line references and return a cited source span?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "README.md",
+        "start_line": 4,
+        "end_line": 6
+      }
+    ],
+    "rationale": "Yes, README states it preserves line references and returns a cited source span with a commit identifier.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "line"
+        ],
+        [
+          "span",
+          "citation"
+        ],
+        [
+          "commit"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-27",
+    "split": "heldout",
+    "category": "security",
+    "question": "Which functions together protect filesystem boundary and block symlinks?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 2,
+        "end_line": 8
+      }
+    ],
+    "rationale": "validate_relative_path and block_symlink_traversal.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "validate_relative_path"
+        ],
+        [
+          "block_symlink_traversal"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-28",
+    "split": "heldout",
+    "category": "storage",
+    "question": "How do serialization and dimension verification ensure index compatibility?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "storage.rs",
+        "start_line": 2,
+        "end_line": 19
+      }
+    ],
+    "rationale": "serialize_index_v1 records dimension and verify_dimension_compatibility checks stored vs runtime dimension.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "serialize_index_v1",
+          "serialization",
+          "serialize"
+        ],
+        [
+          "verify_dimension_compatibility",
+          "dimension"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-29",
+    "split": "heldout",
+    "category": "retrieval",
+    "question": "How does the corpus support semantic scoring and rank fusion together?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "retrieval.rs",
+        "start_line": 10,
+        "end_line": 25
+      }
+    ],
+    "rationale": "cosine_similarity scores vector similarity and reciprocal_rank_fusion fuses ranks.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "cosine_similarity",
+          "cosine"
+        ],
+        [
+          "reciprocal_rank_fusion",
+          "fusion",
+          "rank"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-30",
+    "split": "heldout",
+    "category": "security",
+    "question": "What XML-style tags are used to delineate prompt evidence?",
+    "answerable": true,
+    "expected_sources": [
+      {
+        "path": "security.rs",
+        "start_line": 15,
+        "end_line": 17
+      }
+    ],
+    "rationale": "<repository_evidence> and </repository_evidence>.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [
+        [
+          "repository_evidence"
+        ]
+      ]
+    }
+  },
+  {
+    "id": "HELD-31",
+    "split": "heldout",
+    "category": "trap",
+    "question": "Why does api.rs calculate git diffs when reloading commits?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "False premise: api.rs reload() only returns 'reloaded commit', it does not calculate git diffs.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-32",
+    "split": "heldout",
+    "category": "trap",
+    "question": "How does validate_relative_path decrypt user credentials?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "False premise: validate_relative_path validates paths, it does not decrypt credentials.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-33",
+    "split": "heldout",
+    "category": "trap",
+    "question": "Where is the Redis cache configured for retrieval results?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not use Redis.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-34",
+    "split": "heldout",
+    "category": "trap",
+    "question": "What JWT signing algorithm is used for API authentication?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus has no JWT or authentication mechanism.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-35",
+    "split": "heldout",
+    "category": "trap",
+    "question": "How are vector embeddings accelerated using Apple Metal GPU shaders?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not use Metal GPU shaders.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-36",
+    "split": "heldout",
+    "category": "trap",
+    "question": "What distributed consensus protocol synchronizes index nodes across servers?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus is a local library with no distributed consensus.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-37",
+    "split": "heldout",
+    "category": "trap",
+    "question": "How does the corpus sort quicksort arrays in parallel?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not implement quicksort.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-38",
+    "split": "heldout",
+    "category": "trap",
+    "question": "Where is the Docker container entrypoint defined in the corpus?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "There are no Dockerfiles or container entrypoints in the corpus.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-39",
+    "split": "heldout",
+    "category": "trap",
+    "question": "How does block_symlink_traversal resolve DNS hostnames?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "False premise: block_symlink_traversal checks boolean is_symlink, no DNS resolution exists.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-40",
+    "split": "heldout",
+    "category": "trap",
+    "question": "What SQLite database migration script creates the vector table?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not use SQLite.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-41",
+    "split": "heldout",
+    "category": "trap",
+    "question": "How does the system prompt execute arbitrary bash commands?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The prompt does not execute bash commands; evidence is untrusted data.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  },
+  {
+    "id": "HELD-42",
+    "split": "heldout",
+    "category": "trap",
+    "question": "Which function compresses source code using gzip before indexing?",
+    "answerable": false,
+    "expected_sources": [],
+    "rationale": "The corpus does not use gzip or code compression.",
+    "expected_answer": {
+      "must_include": [],
+      "any_of": [],
+      "note": "unanswerable: correct behaviour is refusal"
+    }
+  }
+]
