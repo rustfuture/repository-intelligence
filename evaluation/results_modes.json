@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-16T10:25:43Z",
+  "timestamp": "2026-09-16T20:00:23Z",
   "corpus": "evaluation/corpus",
   "total_questions": 42,
   "answerable_count": 30,
@@ -9,8 +9,8 @@
     "trap_count": 12,
     "pre_model_refusal_count": 8,
     "model_refusal_count": 0,
-    "guard_rejection_count": 4,
-    "accepted_on_unanswerable_count": 0,
+    "guard_rejection_count": 3,
+    "accepted_on_unanswerable_count": 1,
     "provider_error_count": 0,
     "note": "pre_model_refusal_count counts traps with no lexical anchor where the model was never called; it is not model or guard refusal accuracy. accepted_on_unanswerable_count > 0 is a false acceptance at the refusal gate. No single refusal-accuracy number is reported."
   },
@@ -22,8 +22,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 1.0,
-        "latency_p50_ms": 70.52,
-        "latency_p95_ms": 84.32
+        "latency_p50_ms": 140.69,
+        "latency_p95_ms": 359.94
       },
       "development": {
         "count": 10,
@@ -31,8 +31,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 1.0,
-        "latency_p50_ms": 73.84,
-        "latency_p95_ms": 453.83
+        "latency_p50_ms": 79.34,
+        "latency_p95_ms": 404.97
       },
       "heldout": {
         "count": 20,
@@ -40,8 +40,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 1.0,
-        "latency_p50_ms": 70.07,
-        "latency_p95_ms": 76.63
+        "latency_p50_ms": 144.58,
+        "latency_p95_ms": 359.94
       }
     },
     "semantic_hash": {
@@ -51,8 +51,8 @@
         "recall_at_3": 0.9333,
         "recall_at_5": 1.0,
         "mrr": 0.8428,
-        "latency_p50_ms": 69.96,
-        "latency_p95_ms": 83.43
+        "latency_p50_ms": 121.86,
+        "latency_p95_ms": 249.84
       },
       "development": {
         "count": 10,
@@ -60,8 +60,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 0.95,
-        "latency_p50_ms": 68.99,
-        "latency_p95_ms": 71.72
+        "latency_p50_ms": 101.33,
+        "latency_p95_ms": 169.77
       },
       "heldout": {
         "count": 20,
@@ -69,8 +69,8 @@
         "recall_at_3": 0.9,
         "recall_at_5": 1.0,
         "mrr": 0.7892,
-        "latency_p50_ms": 79.14,
-        "latency_p95_ms": 84.4
+        "latency_p50_ms": 141.74,
+        "latency_p95_ms": 304.13
       }
     },
     "hybrid_hash": {
@@ -80,8 +80,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 0.9667,
-        "latency_p50_ms": 72.25,
-        "latency_p95_ms": 79.18
+        "latency_p50_ms": 137.68,
+        "latency_p95_ms": 290.46
       },
       "development": {
         "count": 10,
@@ -89,8 +89,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 0.9,
-        "latency_p50_ms": 70.21,
-        "latency_p95_ms": 70.62
+        "latency_p50_ms": 137.68,
+        "latency_p95_ms": 179.83
       },
       "heldout": {
         "count": 20,
@@ -98,8 +98,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 1.0,
-        "latency_p50_ms": 73.47,
-        "latency_p95_ms": 80.63
+        "latency_p50_ms": 142.43,
+        "latency_p95_ms": 295.6
       }
     },
     "semantic_nomic": {
@@ -109,8 +109,8 @@
         "recall_at_3": 0.9667,
         "recall_at_5": 1.0,
         "mrr": 0.9178,
-        "latency_p50_ms": 447.94,
-        "latency_p95_ms": 533.38
+        "latency_p50_ms": 617.6,
+        "latency_p95_ms": 1001.49
       },
       "development": {
         "count": 10,
@@ -118,8 +118,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 1.0,
-        "latency_p50_ms": 455.74,
-        "latency_p95_ms": 965.8
+        "latency_p50_ms": 802.42,
+        "latency_p95_ms": 1696.49
       },
       "heldout": {
         "count": 20,
@@ -127,8 +127,8 @@
         "recall_at_3": 0.95,
         "recall_at_5": 1.0,
         "mrr": 0.8767,
-        "latency_p50_ms": 447.94,
-        "latency_p95_ms": 533.38
+        "latency_p50_ms": 441.34,
+        "latency_p95_ms": 951.22
       }
     },
     "hybrid_nomic": {
@@ -138,8 +138,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 0.9667,
-        "latency_p50_ms": 447.3,
-        "latency_p95_ms": 502.23
+        "latency_p50_ms": 418.44,
+        "latency_p95_ms": 501.66
       },
       "development": {
         "count": 10,
@@ -147,8 +147,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 0.95,
-        "latency_p50_ms": 427.18,
-        "latency_p95_ms": 482.59
+        "latency_p50_ms": 447.09,
+        "latency_p95_ms": 501.66
       },
       "heldout": {
         "count": 20,
@@ -156,8 +156,8 @@
         "recall_at_3": 1.0,
         "recall_at_5": 1.0,
         "mrr": 0.975,
-        "latency_p50_ms": 462.38,
-        "latency_p95_ms": 575.36
+        "latency_p50_ms": 418.44,
+        "latency_p95_ms": 504.28
       }
     }
   }
