@@ -1,0 +1,71 @@
+{
+  "commit": "acfa9f9856c252c93e85b5d75d51a7b8ad804868",
+  "status": "",
+  "source_sha256": {
+    "src/extractive.rs": "af3ff43b3e96f14db077ba33136fe5e80a009957d3ef4aac1c0efaeaa956ec80",
+    "src/lib.rs": "4bf06222cfb9717be0438fd97dda613bc0159aadc000fe3d490efb7fd5a1dcde",
+    "src/llm.rs": "b469ab1d43165b4cfaa74ebf66f724cf46c854bc338cf11d16a39ccbec364a07",
+    "src/main.rs": "c6c0125011542354409faa82212d8924a209dde6337d6e699bb86fc54c488cf8"
+  },
+  "models": [
+    {
+      "name": "qwen2.5-coder:1.5b",
+      "model": "qwen2.5-coder:1.5b",
+      "modified_at": "2026-09-06T16:41:37.741342073+03:00",
+      "size": 986062089,
+      "digest": "d7372fd828518a4d38b1eb196c673c31a85f2ed302b3d1e406c4c2d1b64a0668",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "qwen2",
+        "families": [
+          "qwen2"
+        ],
+        "parameter_size": "1.5B",
+        "quantization_level": "Q4_K_M",
+        "context_length": 32768,
+        "embedding_length": 1536
+      },
+      "capabilities": [
+        "completion",
+        "tools",
+        "insert"
+      ]
+    },
+    {
+      "name": "nomic-embed-text:latest",
+      "model": "nomic-embed-text:latest",
+      "modified_at": "2026-09-06T16:01:15.473863743+03:00",
+      "size": 274302450,
+      "digest": "0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "nomic-bert",
+        "families": [
+          "nomic-bert"
+        ],
+        "parameter_size": "137M",
+        "quantization_level": "F16",
+        "context_length": 2048,
+        "embedding_length": 768
+      },
+      "capabilities": [
+        "embedding"
+      ]
+    }
+  ],
+  "questions_sha256": "d3912bf9d4a8f8b8f47aceace837bc241669c39bb89eb71382f5cdd75bb80a82",
+  "corpus_sha256": {
+    "README.md": "2984d9c83f0897acc822e99c6c2acf900a1490477d89e4ef46136d38921e546c",
+    "api.rs": "e78fcfb30f10e3dd82f1856980e4aa41341776ff1444124fbb78b55bc6b5ee1b",
+    "indexing.rs": "60f8e40d976abfd615b57ab2905b6b13cc5cb128027c7e40f93c538869620d80",
+    "retrieval.rs": "5c52e6006a7807b5ac621ee8a1b388adcc26e74d7f6d4bae77c42bdee9179d81",
+    "security.rs": "2d33b96a30120375830ba2ba639efcd3fda085e0b62706c9c6a152b8b68fafb0",
+    "storage.rs": "785895fd381dd719440e679c6d56550fef48838fac6f3176650559b104d38a09",
+    "untrusted.md": "46beab23bcebf3b056c70fc7c123fa6b4ea5bc72bc3f0f5735cd744ff8a948aa"
+  },
+  "mode": "extractive-selection-v1",
+  "latency_scope": "cold CLI including index rebuild and model call",
+  "limitation": "Previously exposed synthetic questions; regression evaluation, not fresh unseen generalization evidence."
+}
