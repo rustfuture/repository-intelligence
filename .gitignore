@@ -1,4 +1,7 @@
-/target/
+target/
 .repository-intelligence/
 __pycache__/
+*.pyc
+.venv/
+.ipynb_checkpoints/
 /audit/

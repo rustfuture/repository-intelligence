@@ -1,15 +1,17 @@
-<h1 align="center">Repository Intelligence</h1>
-<p align="center">
-  Evidence-first repository retrieval in Rust — local lexical, neural and hybrid search
-  with an inspectable extractive answer contract.
-</p>
+# Repository Intelligence
 
-<p align="center">
-  <a href="https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml/badge.svg?branch=main"></a>
-  <img alt="Rust 1.85+" src="https://img.shields.io/badge/rust-1.85%2B-orange?style=flat-square">
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
-  <img alt="Local-first" src="https://img.shields.io/badge/inference-local--first-444?style=flat-square">
-</p>
+A local-first code retrieval and source-selection CLI in Rust for developers and auditors who require verbatim repository citations instead of generative prose.
+
+[![CI](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**Status:** Experimental research prototype (v0.1.0). Designed for single-tenant local inspection; not a multi-tenant production service.
+
+- **Local search modes**: Provides line-cited lexical search, vector similarity search (offline `HashEmbedding` baseline or local Ollama `nomic-embed-text`), and hybrid retrieval fused via reciprocal rank fusion (RRF `k=60`).
+- **Inspectable extractive answer contract**: When querying an LLM (`qwen2.5-coder:1.5b` or AGY adapter), the model selects only evidence IDs (`[E1]`, `[E2]`); the application validates spans and renders original source lines verbatim, refusing extra prose or invalid IDs atomically.
+- **Binary-free snapshot persistence**: Saves and loads portable index snapshots (`RI_INDEX_V1`) storing file contents, line maps, revision metadata, and recent commit history.
+- **Incremental Git synchronization**: Synchronizes file modifications, additions, deletions, and renames via Git diff, falling back to content-hash scans on dirty worktrees.
+- **Zero-dependency local HTTP service**: Exposes single-threaded `/health`, `/search`, `/commits`, and `/reload` endpoints over localhost using only Rust's standard library.
 
 <p align="center">
   <a href="#at-a-glance">At a Glance</a> ·
@@ -20,21 +22,17 @@
   <a href="#limitations">Limitations</a>
 </p>
 
-A local Rust repository index with lexical, vector and hybrid retrieval, source-line
-citations, incremental updates, and model-assisted **source selection**. The model never
-writes the answer: it returns evidence IDs and the application renders the original source.
-
 ## At a Glance
 
 | | |
 |---|---|
-| Language | Rust 1.85+ (edition 2021), `cargo` only |
-| Retrieval | Lexical + vector indexes fused by reciprocal rank (hybrid) |
-| Embeddings | Deterministic `HashEmbedding` by default; optional Nomic via Ollama |
+| Language | Rust 1.85+ (edition 2021), zero third-party dependencies (`cargo` only) |
+| Retrieval | Lexical + vector indexes fused by reciprocal rank (hybrid RRF `k=60`) |
+| Embeddings | Deterministic `HashEmbedding` by default; optional Nomic via local Ollama |
 | Answering | `extractive-selection-v1`: evidence IDs in, verbatim source lines out |
-| Models | Local Ollama (`qwen2.5-coder:1.5b`, `nomic-embed-text`) or the AGY adapter |
+| Models | Local Ollama (`qwen2.5-coder:1.5b`, `nomic-embed-text`) or external AGY adapter |
 | Evaluation | 42-question v3 regression with committed raw records and manifests |
-| Tests | 37 Rust tests + 5 Python evaluator tests (run in CI) |
+| Tests | 37 Rust tests + 5 Python evaluator tests (run in CI via [.github/workflows/ci.yml](.github/workflows/ci.yml)) |
 
 ## Architecture
 
@@ -65,23 +63,29 @@ immutable snapshot identifier.
 
 ## Quick Start
 
-Requires Rust 1.85+. Neural embeddings and model-assisted answers additionally require an
-already running Ollama daemon with `nomic-embed-text` and `qwen2.5-coder:1.5b`.
+Requires Rust 1.85+. Offline commands use the deterministic `HashEmbedding` provider and require no external services. Neural embeddings and model-assisted answers additionally require an already running local Ollama daemon with `nomic-embed-text` and `qwen2.5-coder:1.5b`.
 
 ```sh
+# Build binary
 cargo build --locked
+
+# View available CLI options and modes
+cargo run --locked -- --help
 
 # 1. Index a repository (default retrieval uses deterministic HashEmbedding)
 cargo run --locked -- --index evaluation/corpus /tmp/ri.ri
 
-# 2. Retrieve evidence without calling a model
+# 2. Retrieve evidence offline without calling a model
 cargo run --locked -- --semantic evaluation/corpus "index header"
 cargo run --locked -- --hybrid   evaluation/corpus "index header"
 
-# 3. Extractive answer: the model returns evidence IDs, the app renders the source
+# 3. Query a saved snapshot
+cargo run --locked -- --load-index /tmp/ri.ri "index header"
+
+# 4. Extractive answer: the model returns evidence IDs, the app renders the source (requires local Ollama)
 USE_OLLAMA=1 cargo run --locked -- --answer evaluation/corpus "What static string does reload return in api.rs?"
 
-# 4. Machine-readable answer record
+# 5. Machine-readable answer record (requires local Ollama)
 USE_OLLAMA=1 cargo run --locked -- --answer-json evaluation/corpus "What static string does reload return in api.rs?"
 ```
 
@@ -138,6 +142,8 @@ cargo check --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 -m unittest discover -s evaluation/v3 -p 'test_*.py'
+python3 evaluation/evaluate.py
+python3 evaluation/evaluate_modes.py
 ```
 
 Reproduce the evaluation into a new directory (existing outputs are never overwritten):
