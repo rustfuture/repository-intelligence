@@ -1,69 +1,21 @@
 # Repository Intelligence
 
-A local-first code retrieval and source-selection CLI in Rust for developers and auditors who require verbatim repository citations instead of generative prose.
+Repository Intelligence searches local code and returns exact source lines to answer questions instead of generating prose.
 
 [![CI](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status:** Experimental research prototype (v0.1.0). Designed for single-tenant local inspection; not a multi-tenant production service.
+**Status:** Experimental research prototype (v0.1.0) for local code inspection.
 
-- **Local search modes**: Provides line-cited lexical search, vector similarity search (offline `HashEmbedding` baseline or local Ollama `nomic-embed-text`), and hybrid retrieval fused via reciprocal rank fusion (RRF `k=60`).
-- **Inspectable extractive answer contract**: When querying an LLM (`qwen2.5-coder:1.5b` via Ollama, or Gemini via the AGY adapter — AGY is the Google Antigravity command-line client), the model selects only evidence IDs (`[E1]`, `[E2]`); the application validates spans and renders original source lines verbatim, refusing extra prose or invalid IDs atomically.
-- **Binary-free snapshot persistence**: Saves and loads portable index snapshots (`RI_INDEX_V1`) storing file contents, line maps, revision metadata, and recent commit history.
-- **Incremental Git synchronization**: Synchronizes file modifications, additions, deletions, and renames via Git diff, falling back to content-hash scans on dirty worktrees.
-- **Zero-dependency local HTTP service**: Exposes single-threaded `/health`, `/search`, `/commits`, and `/reload` endpoints over localhost using only Rust's standard library.
+- Searches code using text matching, offline hash embeddings, or local neural models.
+- Answers questions by extracting and quoting exact source lines instead of generating text.
+- Stores portable repository index snapshots without external database dependencies.
+- Synchronizes file additions, changes, and deletions incrementally through Git diffs.
+- Exposes local search and index reload endpoints over a lightweight HTTP server.
 
-<p align="center">
-  <a href="#at-a-glance">At a Glance</a> ·
-  <a href="#architecture">Architecture</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#measured-results">Results</a> ·
-  <a href="#reproducibility">Reproducibility</a> ·
-  <a href="#limitations">Limitations</a>
-</p>
+## Quick start
 
-## At a Glance
-
-| | |
-|---|---|
-| Language | Rust 1.85+ (edition 2021), zero third-party dependencies (`cargo` only) |
-| Retrieval | Lexical + vector indexes fused by reciprocal rank (hybrid RRF `k=60`) |
-| Embeddings | Deterministic `HashEmbedding` by default; optional Nomic via local Ollama |
-| Answering | `extractive-selection-v1`: evidence IDs in, verbatim source lines out |
-| Models | Local Ollama (`qwen2.5-coder:1.5b`, `nomic-embed-text`) or external AGY adapter |
-| Evaluation | 42-question v3 regression with committed raw records and manifests |
-| Tests | 37 Rust tests + 5 Python evaluator tests (run in CI via [.github/workflows/ci.yml](.github/workflows/ci.yml)) |
-
-## Architecture
-
-```mermaid
-flowchart TD
-    R[Repository] --> S[Filtered Scanner]
-    S --> C[Chunks / Spans]
-    C --> L[Lexical Index]
-    C --> V[Vector Index]
-    L --> H[Hybrid Retrieval - RRF]
-    V --> H
-    H --> E[Evidence Candidates]
-    E --> M[Model Selects Evidence IDs]
-    M -->|IDs: E1, E2| O[Application Renders Original Source]
-    M -->|Refusal| N[Return No Answer]
-```
-
-Files are scanned through a sensitivity filter into line-addressed chunks. Lexical and
-vector indexes feed a hybrid retriever; the model sees labelled evidence and may only
-select IDs. The application validates each ID, checks the declared span against the
-quoted text, and renders the original lines. Free-form prose and mixed valid/invalid
-selections are refused atomically.
-
-The local HTTP service exposes `/health`, `/search?q=...`, `/commits?q=...` and `/reload`.
-It has no TLS, auth, or multi-tenant isolation — bind it to loopback. Git synchronization
-handles changed and deleted files and marks dirty worktrees; a dirty label alone is not an
-immutable snapshot identifier.
-
-## Quick Start
-
-Requires Rust 1.85+. Offline commands use the deterministic `HashEmbedding` provider and require no external services. Neural embeddings and model-assisted answers additionally require an already running local Ollama daemon with `nomic-embed-text` and `qwen2.5-coder:1.5b`.
+Requires Rust 1.85+. Offline commands use a deterministic `HashEmbedding` provider without external services. Neural embeddings and model-assisted answers use a local Ollama service (`nomic-embed-text` and `qwen2.5-coder:1.5b`) or the AGY adapter (the Google Antigravity command-line client).
 
 ```sh
 # Build binary
@@ -91,50 +43,69 @@ USE_OLLAMA=1 cargo run --locked -- --answer-json evaluation/corpus "What static 
 
 Default retrieval uses deterministic `HashEmbedding` (not a learned model).
 `RI_EMBEDDING_PROVIDER=nomic` selects local neural embeddings. `USE_OLLAMA=1` selects
-Ollama; without it the existing AGY adapter is used. No automatic hash fallback is claimed
-when a selected neural provider fails.
+Ollama; without it the AGY adapter (Google Antigravity command-line client) is used.
+No automatic hash fallback occurs when a selected neural provider fails.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    R[Repository] --> S[Filtered Scanner]
+    S --> C[Chunks / Spans]
+    C --> L[Lexical Index]
+    C --> V[Vector Index]
+    L --> H[Hybrid Retrieval - RRF]
+    V --> H
+    H --> E[Evidence Candidates]
+    E --> M[Model Selects Evidence IDs]
+    M -->|IDs: E1, E2| O[Application Renders Original Source]
+    M -->|Refusal| N[Return No Answer]
+```
+
+- A repository scanner filters binary and sensitive files, then chunks source files into line-addressed spans.
+- Lexical matching and vector embeddings index chunks, and reciprocal rank fusion combines candidate scores.
+- Top candidates are formatted into numbered evidence blocks (`[E1]`, `[E2]`) and passed to the model prompt.
+- The model selects only evidence identifiers and cannot return free-form prose.
+- The application verifies selected identifiers and displays original source lines directly from disk.
+
+For component details, trust boundaries, and system overview, see [docs/architecture.md](docs/architecture.md).
 
 ## Answer Contract
 
-`--answer` and `--answer-json` use `extractive-selection-v1`. The model returns only
-evidence IDs. The application validates every ID and renders the original source text with
-file/line references. Extra prose, invalid IDs, and mixed valid/invalid output are refused.
+The `--answer` and `--answer-json` commands use `extractive-selection-v1`. The model returns only
+evidence IDs. The application validates each ID and renders original source text with
+file and line references. Extra prose, invalid IDs, and mixed valid/invalid output are refused atomically.
 
-**An exact quotation is not proof that a source is true or answers the question.**
-Selections may be irrelevant; malicious repository text may be quoted as data; the local
-model can make false selections or refuse useful sources. Output is labelled as source
-excerpts, not verified factual answers. No shell or tool execution is granted to the
-answering model.
+An exact quotation is not proof that a source is true or answers the question.
+Selections may be irrelevant, and repository text is treated as untrusted data. Output is labelled as source
+excerpts, not verified answers. The model receives no shell or tool execution privileges.
 
 ## Measured Results
 
 [Full v3 regression record](evaluation/v3/run-03/report.md): 42 previously exposed
-questions — 30 answerable, 12 unanswerable; 41 model calls and 1 pre-model refusal. Local
-Qwen and Nomic digests, corpus, questions and source hashes are recorded in the manifest.
-
-| Outcome | Count |
-|---|---:|
-| Expected source fully covered | 21 |
-| Irrelevant selection | 5 |
-| Partial source coverage | 2 |
-| False refusal | 2 |
-| Correct refusal on unanswerable questions | 7 |
-| False selection on unanswerable questions | 5 |
-
-Derived from the same raw records: **12 false accepts** (5 irrelevant + 2 partial + 5
-selections on unanswerable questions) and **2 false rejects**. An earlier aggregate
-refusal figure did not separate these outcomes.
-
-All accepted excerpts matched their source text in this run — that is quotation integrity,
-**not** answer correctness. Source-overlap scoring uses frozen expected spans and does not
-establish entailment. The corpus is small, authored, and previously exposed: this is
-regression evidence, not an unseen generalization benchmark.
+questions (30 answerable, 12 unanswerable; 41 model calls, 1 pre-model refusal).
+Results yielded 12 false accepts (5 irrelevant, 2 partial, 5 on unanswerable questions)
+and 2 false rejects, with 21 expected sources fully covered and 7 correct refusals.
 
 The committed HTTP benchmark (`evaluation/v3/benchmark-local-http.json`) measures 200
-sequential localhost requests on the fixed authored corpus at p50 0.857 ms / p95 0.920 ms.
-It measures request overhead on that setup only, not generation latency.
+sequential localhost requests on the fixed authored corpus at p50 0.857 ms / p95 0.920 ms
+(request overhead only, not generation latency).
+
+All accepted excerpts matched source text (quotation integrity, not semantic correctness).
+For the extended results table and historical notes, see [docs/measured-results.md](docs/measured-results.md).
 
 ## Reproducibility
+
+Reproduce the evaluation into a new directory (existing outputs are never overwritten):
+
+```sh
+python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
+python3 evaluation/v3/evaluate.py --render-only evaluation/v3/my-run   # re-render, no model calls
+```
+
+The output `summary.json` separates `false_accepts`, `false_rejects`, `model_called`, and `pre_model_refusals`. A pre-model refusal indicates the index lacked a lexical anchor and the model was not called. Historical notes on superseded claims are relocated to [docs/measured-results.md](docs/measured-results.md).
+
+## Tests
 
 ```sh
 cargo fmt --check
@@ -146,19 +117,7 @@ python3 evaluation/evaluate.py
 python3 evaluation/evaluate_modes.py
 ```
 
-Reproduce the evaluation into a new directory (existing outputs are never overwritten):
-
-```sh
-python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
-python3 evaluation/v3/evaluate.py --render-only evaluation/v3/my-run   # re-render, no model calls
-```
-
-`summary.json` reports true numerators and denominators and separates `false_accepts`,
-`false_rejects`, `model_called` and `pre_model_refusals`. A pre-model refusal means the
-index had no lexical anchor and the model was never called — a fact about the index, not
-model or guard refusal accuracy. Old v1/v2 reports are historical; their 12/12 refusal and
-universal injection-defense claims are superseded. Retrieval and generation metrics are
-never pooled.
+The test suite validates formatting, static analysis, 37 Rust unit and regression tests covering indexing and retrieval, and 5 Python evaluator tests.
 
 ## Limitations
 
