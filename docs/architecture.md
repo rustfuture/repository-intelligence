@@ -40,3 +40,16 @@ The local HTTP process keeps its in-memory index behind an `RwLock`; `/reload` t
 The optional `--answer` path requires lexical evidence before constructing up to five hybrid evidence chunks. It sends that evidence in a provider prompt to AGY (default model configurable with `AGY_MODEL`) or to Ollama when `USE_OLLAMA` is set. Repository text is data, not instructions. The CLI performs heuristic citation screening against the supplied evidence; the optional smoke scripts additionally check expected concepts and that cited paths/lines exist. These checks are not proof of answer correctness.
 
 Current limitations are the working-tree snapshot boundary, simple ASCII tokenization, the untrained hash-vector baseline, conservative declaration parsing, the 100-record commit metadata limit, no full historical blob or blame retrieval, no background watcher, and no authentication, TLS, rate limiting, or multi-tenant isolation. External LLM calls receive retrieved repository text, and AGY does not provide token or monetary usage data in this path.
+
+
+## System Overview
+
+| Property | Detail |
+|---|---|
+| Language | Rust 1.85+ (edition 2021), zero third-party dependencies (`cargo` only) |
+| Retrieval | Lexical + vector indexes fused by reciprocal rank (hybrid RRF `k=60`) |
+| Embeddings | Deterministic `HashEmbedding` by default; optional Nomic via local Ollama |
+| Answering | `extractive-selection-v1`: evidence IDs in, verbatim source lines out |
+| Models | Local Ollama (`qwen2.5-coder:1.5b`, `nomic-embed-text`) or external AGY adapter |
+| Evaluation | 42-question v3 regression with committed raw records and manifests |
+| Tests | 37 Rust tests + 5 Python evaluator tests (run in CI via [.github/workflows/ci.yml](.github/workflows/ci.yml)) |
