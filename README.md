@@ -8,7 +8,7 @@ A local-first code retrieval and source-selection CLI in Rust for developers and
 **Status:** Experimental research prototype (v0.1.0). Designed for single-tenant local inspection; not a multi-tenant production service.
 
 - **Local search modes**: Provides line-cited lexical search, vector similarity search (offline `HashEmbedding` baseline or local Ollama `nomic-embed-text`), and hybrid retrieval fused via reciprocal rank fusion (RRF `k=60`).
-- **Inspectable extractive answer contract**: When querying an LLM (`qwen2.5-coder:1.5b` or AGY adapter), the model selects only evidence IDs (`[E1]`, `[E2]`); the application validates spans and renders original source lines verbatim, refusing extra prose or invalid IDs atomically.
+- **Inspectable extractive answer contract**: When querying an LLM (`qwen2.5-coder:1.5b` via Ollama, or Gemini via the AGY adapter — AGY is the Google Antigravity command-line client), the model selects only evidence IDs (`[E1]`, `[E2]`); the application validates spans and renders original source lines verbatim, refusing extra prose or invalid IDs atomically.
 - **Binary-free snapshot persistence**: Saves and loads portable index snapshots (`RI_INDEX_V1`) storing file contents, line maps, revision metadata, and recent commit history.
 - **Incremental Git synchronization**: Synchronizes file modifications, additions, deletions, and renames via Git diff, falling back to content-hash scans on dirty worktrees.
 - **Zero-dependency local HTTP service**: Exposes single-threaded `/health`, `/search`, `/commits`, and `/reload` endpoints over localhost using only Rust's standard library.
