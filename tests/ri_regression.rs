@@ -5,17 +5,24 @@ use std::{
     net::{TcpListener, TcpStream},
     path::PathBuf,
     process::Command,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+static TEMP_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 fn temp_dir(label: &str) -> PathBuf {
+    let count = TEMP_DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
     let suffix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock before epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("repository-intelligence-{label}-{suffix}"));
+    let path =
+        std::env::temp_dir().join(format!("repository-intelligence-{label}-{suffix}-{count}"));
     fs::create_dir_all(&path).expect("create temporary directory");
     path
 }

@@ -27,6 +27,27 @@ fn main() {
     let mut args = raw_args.into_iter();
     let mode = args.next().unwrap_or_else(|| ".".into());
     match mode.as_str() {
+        "--help" | "-h" => {
+            println!("Usage: repository-intelligence [OPTIONS] <repo> [query...]");
+            println!();
+            println!("Commands and options:");
+            println!("  <repo> <query...>                  Lexical search (default)");
+            println!("  --semantic <repo> <query...>       Vector search using cosine similarity");
+            println!(
+                "  --hybrid <repo> <query...>         Reciprocal rank fusion (lexical + vector)"
+            );
+            println!("  --index <repo> [path]              Build and save index snapshot");
+            println!("  --load-index [path] <query...>     Load snapshot and run hybrid search");
+            println!("  --answer <repo> <question...>      Extractive answer selection via LLM");
+            println!(
+                "  --answer-json <repo> <question...> Extractive answer selection with JSON output"
+            );
+            println!("  --commits <repo> <query...>        Search recent commit history");
+            println!("  --analytics [repo]                 Print index statistics");
+            println!("  --serve [address] [repo]           Start local HTTP service (default: 127.0.0.1:8080)");
+            println!("  --embedding <provider>             Embedding provider (hash or nomic)");
+            println!("  --help, -h                         Print this help message");
+        }
         "--answer" => answer_command(&mut args, false),
         "--answer-json" => answer_command(&mut args, true),
         "--serve" => {
