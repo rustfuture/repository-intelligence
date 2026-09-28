@@ -1,6 +1,6 @@
 # Repository Intelligence
 
-Repository Intelligence searches local code and returns exact source lines to answer questions instead of generating prose.
+Repository Intelligence searches local code and returns verbatim source lines for a question instead of generating prose; relevance is not guaranteed.
 
 [![CI](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -8,7 +8,7 @@ Repository Intelligence searches local code and returns exact source lines to an
 **Status:** Experimental research prototype (v0.1.0) for local code inspection.
 
 - Searches code using text matching, offline hash embeddings, or local neural models.
-- Answers questions by extracting and quoting exact source lines instead of generating text.
+- Responds to questions by quoting exact source lines instead of generating text; quotes match the source, but relevance is not guaranteed.
 - Stores portable repository index snapshots without external database dependencies.
 - Synchronizes file additions, changes, and deletions incrementally through Git diffs.
 - Exposes local search and index reload endpoints over a lightweight HTTP server.

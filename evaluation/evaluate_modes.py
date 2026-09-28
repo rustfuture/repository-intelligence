@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Compare lexical, semantic, and RRF hybrid retrieval modes across splits."""
+"""Compare lexical, semantic, and RRF hybrid retrieval modes across splits.
+
+Legacy script: it overwrites evaluation/results_modes.json in place. The documented
+reproduction path is evaluation/v3/evaluate.py, which writes to a new directory.
+"""
 import json
 import os
 import re
