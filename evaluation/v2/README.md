@@ -18,7 +18,7 @@ What was wrong with the v2 framing:
   application prints verbatim source text.
 
 Current evaluation: [`evaluation/v3`](../v3/README.md) and
-[`evaluation/v3/run-01/report.md`](../v3/run-01/report.md). Do not pool v2 and v3
+[`evaluation/v3/run-03/report.md`](../v3/run-03/report.md). Do not pool v2 and v3
 numbers.
 
 `report.md` and `summary.json` here are frozen v2 outputs and are unedited except

@@ -7,10 +7,15 @@ return only evidence IDs (`[E1]`, `[E2]`, …), at most three, or the exact toke
 verbatim with `path:line` references. Extra prose, malformed IDs, and mixed
 valid/invalid output are refused atomically.
 
-This design removes the failure modes of the earlier free-form path, where an
-answer was approved by word overlap against the cited span. Under extraction
-there is no model-authored prose to contain an invented number, a flipped
-negation, a reversed relation, or an added claim.
+This design removes one failure mode of the earlier free-form path, where an
+answer was approved by word overlap against the cited span: model-authored
+prose. Under extraction there is no such prose to contain an invented number,
+a flipped negation, a reversed relation, or an added claim. It does not remove
+irrelevant selection: the model can still pick a real, exactly quoted excerpt
+that does not answer the question, or accept a question that has no answer in
+the repository. Those cases are counted as false accepts in the v3 runs (12 in
+the reported run-03, see
+[`evaluation/v3/run-03/summary.json`](../evaluation/v3/run-03/summary.json)).
 
 **What this does not establish.** An exact quotation is not evidence that the
 source is true, relevant, or answers the question. The model can select an
@@ -18,8 +23,9 @@ irrelevant or even malicious repository file, and a selected document can assert
 something the code does not do. Quotation integrity and semantic entailment are
 different properties, and only the former is checked automatically. Old
 free-form validation notes and the 12/12 refusal claim are superseded; see
-[`evaluation/v3/run-01/report.md`](../evaluation/v3/run-01/report.md) for the
-current measured record.
+[`evaluation/v3/run-03/report.md`](../evaluation/v3/run-03/report.md) for the
+current measured record. Run-01 and run-02 are earlier runs of the same 42
+questions and remain committed as history; the README lists all three.
 
 ## Local model run
 
