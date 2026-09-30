@@ -87,6 +87,15 @@ questions (30 answerable, 12 unanswerable; 41 model calls, 1 pre-model refusal).
 Results yielded 12 false accepts (5 irrelevant, 2 partial, 5 on unanswerable questions)
 and 2 false rejects, with 21 expected sources fully covered and 7 correct refusals.
 
+Three runs of these 42 questions are committed (`evaluation/v3/run-01`, `run-02`, `run-03`).
+Run-03 is reported here because it is the latest run and the only one made after the unused
+`src/citation.rs` module was removed (commit `79fc4c1`, clean tree); run-01 was made on a dirty
+working tree and run-02 on commit `63c1eba`. The runs differ: false accepts / expected sources
+covered / false rejects are 12 / 18 / 3 (run-01), 8 / 23 / 3 (run-02) and 12 / 21 / 2 (run-03),
+so run-02 is the best of the three and run-03 is not the most favourable. Run-01 and run-02 record
+identical source, question and corpus hashes and model digests, so that spread is run-to-run
+variation rather than a recorded code change; treat these counts as one sample, not a stable rate.
+
 The committed HTTP benchmark (`evaluation/v3/benchmark-local-http.json`) measures 200
 sequential localhost requests on the fixed authored corpus at p50 0.857 ms / p95 0.920 ms
 (request overhead only, not generation latency).

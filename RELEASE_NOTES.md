@@ -11,10 +11,20 @@
 - Optional extractive-contract and single-fixture prompt-injection smoke scripts remain separate from normal CI because they require a local model; they check quotation integrity and one injected sentinel, not general injection immunity.
 - The stable GitHub Actions job runs the Rust suite and both deterministic retrieval evaluators; a separate job checks the Rust 1.85 MSRV.
 
-Local sequential HTTP benchmark on 2026-09-14 (200 requests against the fixed authored corpus): p50 `0.448 ms`, p95 `0.566 ms`, max `0.675 ms`. These figures are localhost plumbing measurements, not production capacity claims.
+Local sequential HTTP benchmark (200 requests against the fixed authored corpus), as committed in `evaluation/v3/benchmark-local-http.json`: p50 `0.857 ms`, p95 `0.920 ms`, max `2.110 ms`. These figures are localhost plumbing measurements, not production capacity claims. An earlier version of these notes gave p50 `0.448 ms` / p95 `0.566 ms` / max `0.675 ms` (2026-09-14, commit `2ecd148`) and, before that, `0.210 / 0.432 / 0.698 ms` (2026-09-06, commit `33d1a16`); no output file for either was committed, so they are not reproducible from the repository and are superseded by the committed artifact.
 
-The product's deterministic retrieval run on the fixed 20-question corpus reported Recall@5 `1.00` and MRR `1.0000` for lexical, Recall@5 `1.00` and MRR `0.9375` for `HashEmbedding` semantic retrieval, and Recall@5 `1.00` and MRR `1.0000` for hybrid RRF. The authored corpus is a plumbing/regression fixture, not evidence of general retrieval quality.
+Retrieval comparison, from the committed `evaluation/results_modes.json` (recorded 2026-09-16T20:01:04Z; corpus `evaluation/corpus`, 30 answerable questions of `evaluation/questions.json`; the 20-question column is the subset labelled `heldout` in that file, and all questions were previously exposed). Recall@5 is `1.00` for every mode on both sets.
 
-The separate optional `evaluation/evaluate_hybrid.py` experiment uses local Ollama `nomic-embed-text`. Its current fixture result is lexical MRR `1.0000`, embedding MRR `0.9167`, and hybrid MRR `0.8667` (all Recall@5 `1.00`); this external comparison is not a product-quality claim.
+| Mode | MRR, all 30 | MRR, 20-question subset |
+|---|---:|---:|
+| lexical | 1.0000 | 1.0000 |
+| `HashEmbedding` semantic | 0.8428 | 0.7892 |
+| `HashEmbedding` hybrid (RRF) | 0.9667 | 1.0000 |
+| `nomic-embed-text` semantic | 0.9178 | 0.8767 |
+| `nomic-embed-text` hybrid (RRF) | 0.9667 | 0.9750 |
+
+Lexical is the best or tied-best mode in both columns; neither hybrid mode beats it. The authored corpus is a plumbing/regression fixture, not evidence of general retrieval quality.
+
+Historical figures that no longer match a committed output: an earlier version of these notes reported `HashEmbedding` semantic MRR `0.9375` on a 20-question corpus (also recorded in `docs/implementation-report-2026-09-14.md`), and, from the optional `evaluation/evaluate_hybrid.py`, `nomic-embed-text` embedding MRR `0.9167` and hybrid MRR `0.8667`. They were measured on the 20-question `evaluation/questions.json` of commit `2ecd148` and earlier, before it was replaced by the 42-question set on 2026-09-16 (commit `277b1e1`); no output file for them is committed, and the current results are in the table above. `evaluation/evaluate_hybrid.py` embeds corpus lines through a local Ollama server and has no committed output.
 
 This is not a production service. Authentication, TLS, rate limiting, multi-tenant isolation, immutable commit-snapshot indexing, broad retrieval/answer evaluation, and AGY token/cost accounting remain outside this release candidate.
