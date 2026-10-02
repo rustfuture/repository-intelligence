@@ -26,6 +26,15 @@ fn main() {
     }
     let mut args = raw_args.into_iter();
     let mode = args.next().unwrap_or_else(|| ".".into());
+    let parsed = match extract_top(args.collect()) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            eprintln!("error: {error}");
+            std::process::exit(2);
+        }
+    };
+    let top = parsed.0;
+    let mut args = parsed.1.into_iter();
     match mode.as_str() {
         "--help" | "-h" => {
             println!("Usage: repository-intelligence [OPTIONS] <repo> [query...]");
@@ -46,6 +55,7 @@ fn main() {
             println!("  --analytics [repo]                 Print index statistics");
             println!("  --serve [address] [repo]           Start local HTTP service (default: 127.0.0.1:8080)");
             println!("  --embedding <provider>             Embedding provider (hash or nomic)");
+            println!("  --top <N>                           Limit printed search results (positive integer)");
             println!("  --help, -h                         Print this help message");
         }
         "--answer" => answer_command(&mut args, false),
@@ -81,7 +91,11 @@ fn main() {
                 .unwrap_or_else(|| ".repository-intelligence/index.ri".into());
             let query = args.collect::<Vec<_>>().join(" ");
             let index = Index::load_from(Path::new(&index_path)).expect("load index");
-            for item in index.search_evidence(&query, 10, RetrievalMode::Hybrid) {
+            for item in index
+                .search_evidence(&query, 10, RetrievalMode::Hybrid)
+                .into_iter()
+                .take(top.unwrap_or(usize::MAX))
+            {
                 println!(
                     "{}\t{:.6}\t{}",
                     item.citation(),
@@ -99,7 +113,11 @@ fn main() {
             let repository = args.next().unwrap_or_else(|| ".".into());
             let query = args.collect::<Vec<_>>().join(" ");
             let index = Index::build(Path::new(&repository)).expect("index repository");
-            for item in index.search_evidence(&query, 10, retrieval) {
+            for item in index
+                .search_evidence(&query, 10, retrieval)
+                .into_iter()
+                .take(top.unwrap_or(usize::MAX))
+            {
                 println!(
                     "{}\t{:.6}\t{}",
                     item.citation(),
@@ -112,7 +130,11 @@ fn main() {
             let repository = args.next().unwrap_or_else(|| ".".into());
             let query = args.collect::<Vec<_>>().join(" ");
             let index = Index::build(Path::new(&repository)).expect("index repository");
-            for commit in index.search_commits(&query, 10) {
+            for commit in index
+                .search_commits(&query, 10)
+                .into_iter()
+                .take(top.unwrap_or(usize::MAX))
+            {
                 println!("{}\t{}\t{}", commit.sha, commit.date, commit.subject);
             }
         }
@@ -123,11 +145,41 @@ fn main() {
                 std::process::exit(2);
             }
             let index = Index::build(Path::new(&mode)).expect("index repository");
-            for hit in index.search(&query, 10) {
+            for hit in index
+                .search(&query, 10)
+                .into_iter()
+                .take(top.unwrap_or(usize::MAX))
+            {
                 println!("{}:{}\t{}", hit.path.display(), hit.line, hit.text.trim());
             }
         }
     }
+}
+
+fn extract_top(args: Vec<String>) -> Result<(Option<usize>, Vec<String>), String> {
+    let mut top = None;
+    let mut remaining = Vec::with_capacity(args.len());
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--top" {
+            if top.is_some() {
+                return Err("--top may be specified only once".into());
+            }
+            let value = iter
+                .next()
+                .ok_or_else(|| "--top requires a positive integer".to_owned())?;
+            let parsed = value
+                .parse::<usize>()
+                .map_err(|_| "--top requires a positive integer".to_owned())?;
+            if parsed == 0 {
+                return Err("--top must be greater than 0".into());
+            }
+            top = Some(parsed);
+        } else {
+            remaining.push(arg);
+        }
+    }
+    Ok((top, remaining))
 }
 
 fn answer_command(args: &mut impl Iterator<Item = String>, json_mode: bool) {
@@ -493,4 +545,29 @@ fn json_escape(value: &str) -> String {
         }
     }
     escaped
+}
+
+#[cfg(test)]
+mod top_tests {
+    use super::extract_top;
+
+    #[test]
+    fn parses_top_and_preserves_other_arguments() {
+        let (top, args) = extract_top(vec![
+            "repo".into(),
+            "query".into(),
+            "--top".into(),
+            "3".into(),
+        ])
+        .unwrap();
+        assert_eq!(top, Some(3));
+        assert_eq!(args, vec!["repo", "query"]);
+    }
+
+    #[test]
+    fn rejects_invalid_top_values() {
+        for value in ["0", "abc"] {
+            assert!(extract_top(vec!["--top".into(), value.into()]).is_err());
+        }
+    }
 }
