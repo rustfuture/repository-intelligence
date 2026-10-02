@@ -20,7 +20,7 @@ Repository Intelligence searches local code and returns verbatim source lines fo
 
 ## Quick start
 
-You need Git and Rust 1.85+ with Cargo ([rustup](https://rustup.rs/)). The first build downloads Cargo dependencies. Offline commands use a deterministic `HashEmbedding` provider without external services. Neural embeddings and model-assisted answers use a local Ollama service (`nomic-embed-text` and `qwen2.5-coder:1.5b`) or the AGY adapter (the Google Antigravity command-line client).
+You need Git and Rust 1.85+ with Cargo ([rustup](https://rustup.rs/)). It has no third-party crate dependencies. Offline commands use a deterministic `HashEmbedding` provider without external services. Neural embeddings and model-assisted answers use a local Ollama service (`nomic-embed-text` and `qwen2.5-coder:1.5b`) or the AGY adapter (the Google Antigravity command-line client).
 
 ```sh
 git clone https://github.com/rustfuture/repository-intelligence.git
