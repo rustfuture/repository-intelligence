@@ -1,5 +1,7 @@
 # Repository Intelligence
 
+![repository-intelligence project overview](docs/images/social-preview.png)
+
 Repository Intelligence searches local code and returns verbatim source lines for a question instead of generating prose; relevance is not guaranteed.
 
 [![CI](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml)
