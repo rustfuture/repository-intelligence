@@ -10,6 +10,8 @@ Repository Intelligence searches local code and returns verbatim source lines fo
 > [!NOTE]
 > **Status:** Experimental research prototype (v0.1.0) for local code inspection.
 
+![An offline search printing the top three matching source lines](docs/demo/offline-search.gif)
+
 - Searches code using text matching, offline hash embeddings, or local neural models.
 - Responds to questions by quoting exact source lines instead of generating text; quotes match the source, but relevance is not guaranteed.
 - Stores portable repository index snapshots without external database dependencies.
@@ -36,6 +38,7 @@ cargo run --locked -- --index evaluation/corpus /tmp/ri.ri
 # 2. Retrieve evidence offline without calling a model
 cargo run --locked -- --semantic evaluation/corpus "index header"
 cargo run --locked -- --hybrid   evaluation/corpus "index header"
+cargo run --locked -- --hybrid evaluation/corpus "index header" --top 3
 
 # 3. Query a saved snapshot
 cargo run --locked -- --load-index /tmp/ri.ri "index header"
