@@ -8,6 +8,11 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 40ms
 Hide
 Type `export PS1='$ ' PATH="$PWD/target/release:$PATH"` Enter
+Type `clear; printf '$ %s\n' 'repository-intelligence --hybrid evaluation/corpus "index header" --top 3'; repository-intelligence --hybrid evaluation/corpus "index header" --top 3` Enter
+Sleep 2s
+Show
+Sleep 3s
+Hide
 Type "clear" Enter
 Show
 Type `repository-intelligence --hybrid evaluation/corpus "index header" --top 3`
