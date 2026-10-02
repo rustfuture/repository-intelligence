@@ -52,4 +52,4 @@ Current limitations are the working-tree snapshot boundary, simple ASCII tokeniz
 | Answering | `extractive-selection-v1`: evidence IDs in, verbatim source lines out |
 | Models | Local Ollama (`qwen2.5-coder:1.5b`, `nomic-embed-text`) or external AGY adapter |
 | Evaluation | 42-question v3 regression with committed raw records and manifests |
-| Tests | 37 Rust tests + 5 Python evaluator tests (run in CI via [.github/workflows/ci.yml](.github/workflows/ci.yml)) |
+| Tests | 37 Rust tests + 5 Python evaluator tests (run in CI via [.github/workflows/ci.yml](../.github/workflows/ci.yml)) |
