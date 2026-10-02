@@ -15,9 +15,12 @@ Repository Intelligence searches local code and returns verbatim source lines fo
 
 ## Quick start
 
-Requires Rust 1.85+. Offline commands use a deterministic `HashEmbedding` provider without external services. Neural embeddings and model-assisted answers use a local Ollama service (`nomic-embed-text` and `qwen2.5-coder:1.5b`) or the AGY adapter (the Google Antigravity command-line client).
+You need Git and Rust 1.85+ with Cargo ([rustup](https://rustup.rs/)). The first build downloads Cargo dependencies. Offline commands use a deterministic `HashEmbedding` provider without external services. Neural embeddings and model-assisted answers use a local Ollama service (`nomic-embed-text` and `qwen2.5-coder:1.5b`) or the AGY adapter (the Google Antigravity command-line client).
 
 ```sh
+git clone https://github.com/rustfuture/repository-intelligence.git
+cd repository-intelligence
+
 # Build binary
 cargo build --locked
 
@@ -33,11 +36,19 @@ cargo run --locked -- --hybrid   evaluation/corpus "index header"
 
 # 3. Query a saved snapshot
 cargo run --locked -- --load-index /tmp/ri.ri "index header"
+```
 
-# 4. Extractive answer: the model returns evidence IDs, the app renders the source (requires local Ollama)
+The offline examples print file and line references from the bundled corpus; the snapshot is written to `/tmp/ri.ri`. No API key, running model service, or model weights are needed for those examples. Run them from the repository root. These commands use macOS/Linux paths; choose a local snapshot path on Windows.
+
+### Optional model-assisted answers
+
+Start Ollama and download `qwen2.5-coder:1.5b` before running these commands. See [the Ollama quickstart](https://docs.ollama.com/quickstart) for installation. This step needs model weights and is separate from the offline examples.
+
+```sh
+# Extractive answer: the model returns evidence IDs, the app renders the source
 USE_OLLAMA=1 cargo run --locked -- --answer evaluation/corpus "What static string does reload return in api.rs?"
 
-# 5. Machine-readable answer record (requires local Ollama)
+# Machine-readable answer record
 USE_OLLAMA=1 cargo run --locked -- --answer-json evaluation/corpus "What static string does reload return in api.rs?"
 ```
 
