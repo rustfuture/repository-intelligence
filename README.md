@@ -7,7 +7,8 @@ Repository Intelligence searches local code and returns verbatim source lines fo
 [![CI](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/rustfuture/repository-intelligence/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Status:** Experimental research prototype (v0.1.0) for local code inspection.
+> [!NOTE]
+> **Status:** Experimental research prototype (v0.1.0) for local code inspection.
 
 - Searches code using text matching, offline hash embeddings, or local neural models.
 - Responds to questions by quoting exact source lines instead of generating text; quotes match the source, but relevance is not guaranteed.
@@ -120,12 +121,17 @@ For the extended results table and historical notes, see [docs/measured-results.
 
 Reproduce the evaluation into a new directory (existing outputs are never overwritten):
 
+<details>
+<summary>Reproduction details</summary>
+
 ```sh
 python3 evaluation/v3/evaluate.py --output evaluation/v3/my-run
 python3 evaluation/v3/evaluate.py --render-only evaluation/v3/my-run   # re-render, no model calls
 ```
 
 The output `summary.json` separates `false_accepts`, `false_rejects`, `model_called`, and `pre_model_refusals`. A pre-model refusal indicates the index lacked a lexical anchor and the model was not called. Historical notes on superseded claims are relocated to [docs/measured-results.md](docs/measured-results.md).
+
+</details>
 
 ## Tests
 
@@ -139,7 +145,12 @@ python3 evaluation/evaluate.py
 python3 evaluation/evaluate_modes.py
 ```
 
+<details>
+<summary>More test commands</summary>
+
 The test suite validates formatting, static analysis, 37 Rust unit and regression tests covering indexing and retrieval, and 5 Python evaluator tests.
+
+</details>
 
 ## Limitations
 
@@ -167,6 +178,10 @@ The test suite validates formatting, static analysis, 37 Rust unit and regressio
 ## Repository Map
 
 | Path | Contents |
+
+<details>
+<summary>Repository map</summary>
+
 |---|---|
 | `src/lib.rs` | Index, retrieval modes, git sync, evidence assembly |
 | `src/extractive.rs` | `extractive-selection-v1` validation and rendering |
@@ -176,6 +191,8 @@ The test suite validates formatting, static analysis, 37 Rust unit and regressio
 | `evaluation/corpus/` | Authored Rust/Markdown corpus |
 | `evaluation/v3/` | Evaluator, questions, and committed run records |
 | `docs/architecture.md` | Component and trust boundaries |
+
+</details>
 
 ## License
 
