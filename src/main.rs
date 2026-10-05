@@ -5,11 +5,26 @@ use repository_intelligence::{
 };
 use std::{
     env,
+    fmt::Display,
     io::{Read, Write},
     net::TcpListener,
     path::Path,
     sync::{Arc, RwLock},
 };
+
+fn fail(message: impl Display) -> ! {
+    eprintln!("error: {message}");
+    std::process::exit(1);
+}
+
+fn build_index(path: &Path) -> Index {
+    Index::build(path).unwrap_or_else(|error| {
+        fail(format!(
+            "could not index repository at {}: {error}",
+            path.display()
+        ))
+    })
+}
 
 fn main() {
     let mut raw_args: Vec<String> = env::args().skip(1).collect();
@@ -67,7 +82,7 @@ fn main() {
         }
         "--analytics" => {
             let repository = args.next().unwrap_or_else(|| ".".into());
-            let index = Index::build(Path::new(&repository)).expect("index repository");
+            let index = build_index(Path::new(&repository));
             println!("{}", index.analytics());
         }
         "--index" => {
@@ -75,8 +90,12 @@ fn main() {
             let index_path = args
                 .next()
                 .unwrap_or_else(|| ".repository-intelligence/index.ri".into());
-            let index = Index::build(Path::new(&repository)).expect("index repository");
-            index.save_to(Path::new(&index_path)).expect("save index");
+            let index = build_index(Path::new(&repository));
+            index
+                .save_to(Path::new(&index_path))
+                .unwrap_or_else(|error| {
+                    fail(format!("could not save index to {index_path}: {error}"))
+                });
             println!(
                 "saved={} files={} chunks={} commit={}",
                 index_path,
@@ -90,7 +109,9 @@ fn main() {
                 .next()
                 .unwrap_or_else(|| ".repository-intelligence/index.ri".into());
             let query = args.collect::<Vec<_>>().join(" ");
-            let index = Index::load_from(Path::new(&index_path)).expect("load index");
+            let index = Index::load_from(Path::new(&index_path)).unwrap_or_else(|error| {
+                fail(format!("could not load index from {index_path}: {error}"))
+            });
             for item in index
                 .search_evidence(&query, 10, RetrievalMode::Hybrid)
                 .into_iter()
@@ -112,7 +133,7 @@ fn main() {
             };
             let repository = args.next().unwrap_or_else(|| ".".into());
             let query = args.collect::<Vec<_>>().join(" ");
-            let index = Index::build(Path::new(&repository)).expect("index repository");
+            let index = build_index(Path::new(&repository));
             for item in index
                 .search_evidence(&query, 10, retrieval)
                 .into_iter()
@@ -129,7 +150,7 @@ fn main() {
         "--commits" => {
             let repository = args.next().unwrap_or_else(|| ".".into());
             let query = args.collect::<Vec<_>>().join(" ");
-            let index = Index::build(Path::new(&repository)).expect("index repository");
+            let index = build_index(Path::new(&repository));
             for commit in index
                 .search_commits(&query, 10)
                 .into_iter()
@@ -144,7 +165,7 @@ fn main() {
                 eprintln!("usage: repository-intelligence <repo> <query...>");
                 std::process::exit(2);
             }
-            let index = Index::build(Path::new(&mode)).expect("index repository");
+            let index = build_index(Path::new(&mode));
             for hit in index
                 .search(&query, 10)
                 .into_iter()
@@ -185,7 +206,7 @@ fn extract_top(args: Vec<String>) -> Result<(Option<usize>, Vec<String>), String
 fn answer_command(args: &mut impl Iterator<Item = String>, json_mode: bool) {
     let repository = args.next().unwrap_or_else(|| ".".into());
     let question = args.collect::<Vec<_>>().join(" ");
-    let index = Index::build(Path::new(&repository)).expect("index repository");
+    let index = build_index(Path::new(&repository));
     let evidence_items = index.build_evidence(&question, 5);
     let has_lexical_anchor = !index
         .search_evidence(&question, 1, RetrievalMode::Lexical)
@@ -380,8 +401,9 @@ fn answer_json_model_error(
 
 fn serve(address: &str, root: &Path) {
     let root = root.to_path_buf();
-    let index = Arc::new(RwLock::new(Index::build(&root).expect("index repository")));
-    let listener = TcpListener::bind(address).expect("bind HTTP listener");
+    let index = Arc::new(RwLock::new(build_index(&root)));
+    let listener = TcpListener::bind(address)
+        .unwrap_or_else(|error| fail(format!("could not listen on {address}: {error}")));
     eprintln!("repository-intelligence listening on http://{address}");
     for stream in listener.incoming() {
         let index = Arc::clone(&index);
@@ -395,7 +417,7 @@ fn serve(address: &str, root: &Path) {
         let first_line = request.lines().next().unwrap_or_default();
         let path = first_line.split_whitespace().nth(1).unwrap_or("/");
         let body = if path == "/health" {
-            let index = index.read().expect("index lock");
+            let index = index.read().unwrap_or_else(|error| error.into_inner());
             format!(
                 "{{\"status\":\"ok\",\"commit\":{},\"files\":{},\"chunks\":{},\"embedding\":\"{}\"}}",
                 index
@@ -409,7 +431,7 @@ fn serve(address: &str, root: &Path) {
         } else if path == "/reload" {
             match current_git_revision(&root) {
                 Some(revision) => {
-                    let mut index = index.write().expect("index lock");
+                    let mut index = index.write().unwrap_or_else(|error| error.into_inner());
                     match index.sync_git(&root, &revision) {
                         Ok(()) => format!(
                             "{{\"status\":\"reloaded\",\"commit\":\"{}\",\"files\":{},\"chunks\":{}}}",
@@ -425,7 +447,7 @@ fn serve(address: &str, root: &Path) {
                 None => "{\"error\":\"repository has no readable Git HEAD\"}".to_owned(),
             }
         } else if let Some(query) = path.strip_prefix("/commits?q=") {
-            let index = index.read().expect("index lock");
+            let index = index.read().unwrap_or_else(|error| error.into_inner());
             let query = decode_query(query);
             let items = index
                 .search_commits(&query, 10)
@@ -446,7 +468,7 @@ fn serve(address: &str, root: &Path) {
                 items
             )
         } else if let Some(query) = path.strip_prefix("/search?q=") {
-            let index = index.read().expect("index lock");
+            let index = index.read().unwrap_or_else(|error| error.into_inner());
             let query = decode_query(query);
             let hits = index.search_evidence(&query, 10, RetrievalMode::Hybrid);
             let items = hits
