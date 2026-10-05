@@ -167,7 +167,7 @@ python3 evaluation/evaluate_modes.py
 <details>
 <summary>More test commands</summary>
 
-The test suite validates formatting, static analysis, 37 Rust unit and regression tests covering indexing and retrieval, and 5 Python evaluator tests.
+The test suite validates formatting, static analysis, 43 Rust unit and regression tests covering indexing and retrieval, and 5 Python evaluator tests.
 
 </details>
 
@@ -196,11 +196,10 @@ The test suite validates formatting, static analysis, 37 Rust unit and regressio
 
 ## Repository Map
 
-| Path | Contents |
-
 <details>
 <summary>Repository map</summary>
 
+| Path | Contents |
 |---|---|
 | `src/lib.rs` | Index, retrieval modes, git sync, evidence assembly |
 | `src/extractive.rs` | `extractive-selection-v1` validation and rendering |
