@@ -51,6 +51,9 @@ fn main() {
     let top = parsed.0;
     let mut args = parsed.1.into_iter();
     match mode.as_str() {
+        "--version" | "-V" => {
+            println!("repository-intelligence {}", env!("CARGO_PKG_VERSION"));
+        }
         "--help" | "-h" => {
             println!("Usage: repository-intelligence [OPTIONS] <repo> [query...]");
             println!();
@@ -72,6 +75,7 @@ fn main() {
             println!("  --embedding <provider>             Embedding provider (hash or nomic)");
             println!("  --top <N>                           Limit printed search results (positive integer)");
             println!("  --help, -h                         Print this help message");
+            println!("  --version, -V                      Print the version");
         }
         "--answer" => answer_command(&mut args, false),
         "--answer-json" => answer_command(&mut args, true),
