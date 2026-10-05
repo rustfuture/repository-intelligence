@@ -759,3 +759,16 @@ fn evidence_text_matches_its_declared_line_span() {
     }
     assert!(checked > 0, "expected at least one evidence item");
 }
+
+#[test]
+fn version_flag_prints_the_package_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_repository-intelligence"))
+        .arg("--version")
+        .output()
+        .expect("run CLI");
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).trim(),
+        format!("repository-intelligence {}", env!("CARGO_PKG_VERSION"))
+    );
+}

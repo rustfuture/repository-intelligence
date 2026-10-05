@@ -8,7 +8,7 @@ Repository Intelligence searches local code and returns verbatim source lines fo
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 > [!NOTE]
-> **Status:** Experimental research prototype (v0.1.0) for local code inspection.
+> **Status:** Experimental research prototype (v0.1.1) for local code inspection.
 
 ![An offline search printing the top three matching source lines](docs/demo/offline-search.gif)
 
@@ -19,6 +19,22 @@ Repository Intelligence searches local code and returns verbatim source lines fo
 - Exposes local search and index reload endpoints over a lightweight HTTP server.
 
 ## Quick start
+
+### Try the released CLI (macOS or Linux)
+
+The prebuilt CLI does not require Rust. The installer downloads a release, checks its SHA-256 checksum, and installs to `~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rustfuture/repository-intelligence/main/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
+repository-intelligence --version
+# Search the repository you are in, offline, and print the three best source lines
+repository-intelligence --hybrid . "main function" --top 3
+```
+
+Prebuilt Linux binaries require glibc; unsupported platforms can build from source. On Windows, use the [PowerShell installer](install.ps1).
+
+### Build from source
 
 You need Git and Rust 1.85+ with Cargo ([rustup](https://rustup.rs/)). It has no third-party crate dependencies. Offline commands use a deterministic `HashEmbedding` provider without external services. Neural embeddings and model-assisted answers use a local Ollama service (`nomic-embed-text` and `qwen2.5-coder:1.5b`) or the AGY adapter (the Google Antigravity command-line client).
 
