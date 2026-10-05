@@ -162,6 +162,53 @@ fn malformed_percent_encoding_does_not_crash_http_server() {
     let _ = child.wait();
 }
 
+fn assert_cli_error(output: std::process::Output) {
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.starts_with("error:"), "stderr was: {stderr}");
+    assert!(!stderr.contains("panicked"), "stderr was: {stderr}");
+}
+
+#[test]
+fn nonexistent_repository_reports_cli_error_without_panicking() {
+    let root = temp_dir("missing-repository");
+    let missing = root.join("does-not-exist");
+    let output = Command::new(env!("CARGO_BIN_EXE_repository-intelligence"))
+        .args([missing.to_str().expect("utf8 path"), "query"])
+        .output()
+        .expect("run CLI");
+
+    assert_cli_error(output);
+}
+
+#[test]
+fn missing_load_index_reports_cli_error_without_panicking() {
+    let root = temp_dir("missing-index");
+    let missing = root.join("does-not-exist.ri");
+    let output = Command::new(env!("CARGO_BIN_EXE_repository-intelligence"))
+        .args([
+            "--load-index",
+            missing.to_str().expect("utf8 path"),
+            "query",
+        ])
+        .output()
+        .expect("run CLI");
+
+    assert_cli_error(output);
+}
+
+#[test]
+fn occupied_serve_address_reports_cli_error_without_panicking() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("reserve local port");
+    let address = listener.local_addr().expect("read local address");
+    let output = Command::new(env!("CARGO_BIN_EXE_repository-intelligence"))
+        .args(["--serve", &address.to_string(), "."])
+        .output()
+        .expect("run CLI");
+
+    assert_cli_error(output);
+}
+
 #[test]
 fn git_sync_handles_git_quoted_paths() {
     let root = temp_dir("quoted-path");
